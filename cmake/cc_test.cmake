@@ -1,4 +1,5 @@
 include(CMakeParseArguments)
+include(GoogleTest)
 
 # inspired by https://github.com/abseil/abseil-cpp
 # cc_test()

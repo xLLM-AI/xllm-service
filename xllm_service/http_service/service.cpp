@@ -34,6 +34,7 @@ limitations under the License.
 #include "common/xllm/status.h"
 #include "common/xllm/uuid.h"
 #include "completion.pb.h"
+#include "http_service/chat_json_parser.h"
 #include "scheduler/scheduler.h"
 #include "xllm_service.pb.h"
 
@@ -445,10 +446,17 @@ void XllmHttpServiceImpl::ChatCompletions(
   std::string attachment;
   cntl->request_attachment().copy_to(&attachment, content_len, 0);
 
+  auto chat_json = normalize_chat_json(std::move(attachment));
+  if (!chat_json.ok) {
+    cntl->SetFailed(chat_json.error);
+    LOG(ERROR) << "normalize chat json failed: " << chat_json.error;
+    return;
+  }
+
   google::protobuf::util::JsonParseOptions options;
   options.ignore_unknown_fields = true;
-  auto status =
-      google::protobuf::util::JsonStringToMessage(attachment, req_pb, options);
+  auto status = google::protobuf::util::JsonStringToMessage(
+      chat_json.json, req_pb, options);
   if (!status.ok()) {
     cntl->SetFailed(status.ToString());
     LOG(ERROR) << "parse json to proto failed: " << status.ToString();

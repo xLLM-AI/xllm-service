@@ -1,5 +1,18 @@
 include(cc_binary)
 include(cc_library)
+include(cc_test)
+
+cc_library(
+  NAME
+    chat_json_parser
+  HDRS
+    chat_json_parser.h
+  SRCS
+    chat_json_parser.cpp
+  DEPS
+    glog::glog
+    nlohmann_json::nlohmann_json
+)
 
 cc_library(
   NAME
@@ -11,6 +24,7 @@ cc_library(
     service.cpp 
     request_tracer.cpp
   DEPS
+    :chat_json_parser
     :common
     :request
     :scheduler
@@ -31,4 +45,14 @@ cc_binary(
   DEPS
     :xllm_http_service
     gflags::gflags
+)
+
+cc_test(
+  NAME
+    chat_json_parser_test
+  SRCS
+    chat_json_parser_test.cpp
+  DEPS
+    :chat_json_parser
+    GTest::gtest_main
 )
