@@ -101,12 +101,6 @@ ErrorCode XllmRpcClient::register_instance(const InstanceMetaInfo& metainfo) {
   for (auto& addr : metainfo.addrs) {
     *(req.mutable_addrs()->Add()) = addr;
   }
-  for (auto& k_cache_id : metainfo.k_cache_ids) {
-    *(req.mutable_k_cache_ids()->Add()) = k_cache_id;
-  }
-  for (auto& v_cache_id : metainfo.v_cache_ids) {
-    *(req.mutable_v_cache_ids()->Add()) = v_cache_id;
-  }
   req.set_dp_size(metainfo.dp_size);
   for (auto& ip : metainfo.device_ips) {
     *(req.mutable_device_ips()->Add()) = ip;

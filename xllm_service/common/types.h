@@ -198,8 +198,6 @@ struct InstanceMetaInfo {
   InstanceType type = InstanceType::DEFAULT;
   std::vector<uint64_t> cluster_ids;
   std::vector<std::string> addrs;
-  std::vector<uint64_t> k_cache_ids;
-  std::vector<uint64_t> v_cache_ids;
   int32_t dp_size;
   // device network info
   std::vector<std::string> device_ips;
@@ -230,8 +228,6 @@ struct InstanceMetaInfo {
     json_val["type"] = int8_t(type);
     json_val["addrs"] = addrs;
     json_val["cluster_ids"] = cluster_ids;
-    json_val["k_cache_ids"] = k_cache_ids;
-    json_val["v_cache_ids"] = v_cache_ids;
     json_val["dp_size"] = dp_size;
     json_val["device_ips"] = device_ips;
     json_val["ports"] = ports;
@@ -252,8 +248,6 @@ struct InstanceMetaInfo {
       type = static_cast<InstanceType>(json_value.at("type").get<int8_t>());
       cluster_ids.clear();
       addrs.clear();
-      k_cache_ids.clear();
-      v_cache_ids.clear();
       device_ips.clear();
       ports.clear();
       ttft_profiling_data.clear();
@@ -265,18 +259,8 @@ struct InstanceMetaInfo {
       }
 
       for (const auto& item :
-           json_value.at("k_cache_ids").get<std::vector<uint64_t>>()) {
-        k_cache_ids.push_back(item);
-      }
-
-      for (const auto& item :
            json_value.at("addrs").get<std::vector<std::string>>()) {
         addrs.push_back(item);
-      }
-
-      for (const auto& item :
-           json_value.at("v_cache_ids").get<std::vector<uint64_t>>()) {
-        v_cache_ids.push_back(item);
       }
 
       dp_size = json_value.at("dp_size").get<int32_t>();
