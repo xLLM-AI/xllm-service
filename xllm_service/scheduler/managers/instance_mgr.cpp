@@ -1094,9 +1094,6 @@ bool InstanceMgr::call_link_instance(const std::string& target_rpc_addr,
   for (auto& addr : peer_info.addrs) {
     req.add_addrs(addr);
   }
-  for (auto& ip : peer_info.device_ips) {
-    req.add_device_ips(ip);
-  }
   for (auto& port : peer_info.ports) {
     req.add_ports(port);
   }
@@ -1133,9 +1130,6 @@ bool InstanceMgr::call_unlink_instance(const std::string& target_rpc_addr,
   }
   for (auto& addr : peer_info.addrs) {
     req.add_addrs(addr);
-  }
-  for (auto& ip : peer_info.device_ips) {
-    req.add_device_ips(ip);
   }
   for (auto& port : peer_info.ports) {
     req.add_ports(port);

@@ -98,9 +98,6 @@ void XllmRpcService::GetInstanceInfo(google::protobuf::RpcController* cntl_base,
     *(resp->mutable_addrs()->Add()) = addr;
   }
   resp->set_dp_size(metainfo.dp_size);
-  for (auto& ip : metainfo.device_ips) {
-    *(resp->mutable_device_ips()->Add()) = ip;
-  }
   for (auto& port : metainfo.ports) {
     resp->add_ports(port);
   }
