@@ -102,6 +102,7 @@ ErrorCode XllmRpcClient::register_instance(const InstanceMetaInfo& metainfo) {
     *(req.mutable_addrs()->Add()) = addr;
   }
   req.set_dp_size(metainfo.dp_size);
+  req.set_kv_split_size(metainfo.kv_split_size);
   for (auto& port : metainfo.ports) {
     req.add_ports(port);
   }

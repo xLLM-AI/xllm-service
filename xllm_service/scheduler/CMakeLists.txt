@@ -13,8 +13,10 @@ cc_library(
     xllm_chat_parse_bridge.cpp
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/base_format_detector.cpp
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/qwen25_detector.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/qwen3_coder_detector.cpp
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/kimik2_detector.cpp
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/deepseekv3_detector.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/deepseekv32_detector.cpp
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/glm45_detector.cpp
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/glm47_detector.cpp
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/function_call/function_call_parser.cpp

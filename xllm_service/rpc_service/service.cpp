@@ -98,6 +98,7 @@ void XllmRpcService::GetInstanceInfo(google::protobuf::RpcController* cntl_base,
     *(resp->mutable_addrs()->Add()) = addr;
   }
   resp->set_dp_size(metainfo.dp_size);
+  resp->set_kv_split_size(metainfo.kv_split_size);
   for (auto& port : metainfo.ports) {
     resp->add_ports(port);
   }

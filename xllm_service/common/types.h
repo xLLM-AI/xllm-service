@@ -199,6 +199,7 @@ struct InstanceMetaInfo {
   std::vector<uint64_t> cluster_ids;
   std::vector<std::string> addrs;
   int32_t dp_size;
+  int32_t kv_split_size;
   // transfer listen ports
   std::vector<uint16_t> ports;
   // ttft profiling data
@@ -228,6 +229,7 @@ struct InstanceMetaInfo {
     json_val["addrs"] = addrs;
     json_val["cluster_ids"] = cluster_ids;
     json_val["dp_size"] = dp_size;
+    json_val["kv_split_size"] = kv_split_size;
     json_val["ports"] = ports;
     json_val["ttft_profiling_data"] = ttft_profiling_data;
     json_val["tpot_profiling_data"] = tpot_profiling_data;
@@ -261,6 +263,7 @@ struct InstanceMetaInfo {
       }
 
       dp_size = json_value.at("dp_size").get<int32_t>();
+      kv_split_size = json_value.value("kv_split_size", 1);
       ports = json_value.at("ports").get<std::vector<uint16_t>>();
 
       for (const auto& item : json_value.at("ttft_profiling_data")) {

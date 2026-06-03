@@ -23,6 +23,7 @@ proto_library(
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/chat.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/common.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/completion.proto
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/sample.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/rec.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/disagg_pd.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/xllm_service.proto
@@ -31,7 +32,8 @@ proto_library(
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/tensor.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/multimodal.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/image_generation.proto
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/audio_generation.proto
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/video_generation.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/rerank.proto
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/models.proto
-    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/proto/anthropic.proto
 )
