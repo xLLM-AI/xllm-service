@@ -74,6 +74,21 @@ std::optional<std::string> JinjaChatTemplate::apply(
       message_json["content"] =
           get_mm_content(std::get<Message::MMContentVec>(message.content));
     }
+    if (message.tool_calls.has_value()) {
+      nlohmann::ordered_json tool_calls_json = nlohmann::json::array();
+      for (const auto& tool_call : *message.tool_calls) {
+        tool_calls_json.emplace_back(nlohmann::ordered_json{
+            {"id", tool_call.id},
+            {"type", tool_call.type},
+            {"function",
+             {{"name", tool_call.function.name},
+              {"arguments", tool_call.function.arguments}}}});
+      }
+      message_json["tool_calls"] = std::move(tool_calls_json);
+    }
+    if (!message.tool_call_id.empty()) {
+      message_json["tool_call_id"] = message.tool_call_id;
+    }
 
     messages_json.push_back(message_json);
   }

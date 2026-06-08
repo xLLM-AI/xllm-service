@@ -18,6 +18,7 @@ limitations under the License.
 #include "common/metrics.h"
 #include "common/utils.h"
 #include "common/xllm/status.h"
+#include "http_service/anthropic_adapter.h"
 #include "loadbalance_policy/cache_aware_routing.h"
 #include "loadbalance_policy/round_robin.h"
 #include "loadbalance_policy/slo_aware_policy.h"
@@ -356,6 +357,90 @@ bool Scheduler::record_new_request(std::shared_ptr<ChatCallData> call_data,
 
   {
     // allocate thread for the request
+    std::lock_guard<std::mutex> guard(thread_map_mutex_);
+    remote_requests_output_thread_map_[request->service_request_id] =
+        next_thread_idx;
+    next_thread_idx = (++next_thread_idx) % kOutputTheadNum_;
+  }
+
+  return true;
+}
+
+bool Scheduler::record_new_request(
+    std::shared_ptr<AnthropicCallData> call_data,
+    std::shared_ptr<Request> request) {
+  {
+    std::lock_guard<std::mutex> guard(request_mutex_);
+    if (requests_.find(request->service_request_id) != requests_.end()) {
+      LOG(ERROR) << "The request ID already exists. Requests with the same ID "
+                    "are not allowed. "
+                 << request->service_request_id;
+      return false;
+    }
+
+    request->latest_generate_time = absl::Now();
+    auto tools_for_parse =
+        (request->tool_choice == "none" ? std::vector<JsonTool>{}
+                                        : request->tools);
+    auto tool_call_parser_pref = options_.tool_call_parser();
+    auto reasoning_parser_pref = options_.reasoning_parser();
+    const auto parser_formats = resolve_chat_parser_formats_with_xllm(
+        request->model, tool_call_parser_pref, reasoning_parser_pref);
+    const bool force_reasoning = get_enable_thinking_from_request(
+        request->chat_template_kwargs, parser_formats.reasoning_parser);
+    auto stream_state = request->stream
+                            ? std::make_shared<AnthropicStreamState>()
+                            : nullptr;
+    auto stream_parser =
+        request->stream
+            ? create_stream_output_parser_with_xllm(tools_for_parse,
+                                                    request->model,
+                                                    tool_call_parser_pref,
+                                                    reasoning_parser_pref,
+                                                    force_reasoning)
+            : nullptr;
+    request->call_data = call_data;
+    request->output_callback =
+        [this,
+         call_data,
+         model = request->model,
+         stream = request->stream,
+         stream_state,
+         stream_parser,
+         tools = std::move(tools_for_parse),
+         tool_call_parser = std::move(tool_call_parser_pref),
+         reasoning_parser = std::move(reasoning_parser_pref),
+         force_reasoning](
+            const llm::RequestOutput& req_output) mutable -> bool {
+      if (req_output.status.has_value()) {
+        const auto& status = req_output.status.value();
+        if (!status.ok()) {
+          return call_data->finish_with_error(status.message());
+        }
+      }
+
+      if (stream) {
+        return response_handler_.send_delta_to_client(call_data,
+                                                      model,
+                                                      req_output,
+                                                      stream_state.get(),
+                                                      stream_parser);
+      } else if (!req_output.finished_on_prefill_instance) {
+        return response_handler_.send_result_to_client(call_data,
+                                                       model,
+                                                       req_output,
+                                                       tools,
+                                                       tool_call_parser,
+                                                       reasoning_parser,
+                                                       force_reasoning);
+      }
+      return true;
+    };
+    requests_.emplace(request->service_request_id, request);
+    COUNTER_INC(server_request_in_total);
+  }
+
+  {
     std::lock_guard<std::mutex> guard(thread_map_mutex_);
     remote_requests_output_thread_map_[request->service_request_id] =
         next_thread_idx;

@@ -32,6 +32,8 @@ class StreamOutputParser;
 
 namespace xllm_service {
 
+struct AnthropicStreamState;
+
 struct ChatStreamParseState {
   std::unordered_set<size_t> first_message_sent;
   std::shared_ptr<xllm::StreamOutputParser> stream_parser;
@@ -74,6 +76,20 @@ class ResponseHandler final {
                              int64_t created_time,
                              const std::string& model,
                              const llm::RequestOutput& req_output);
+
+  bool send_delta_to_client(std::shared_ptr<AnthropicCallData> call_data,
+                            const std::string& model,
+                            const llm::RequestOutput& output,
+                            AnthropicStreamState* stream_state,
+                            std::shared_ptr<xllm::StreamOutputParser>
+                                stream_parser = nullptr);
+  bool send_result_to_client(std::shared_ptr<AnthropicCallData> call_data,
+                             const std::string& model,
+                             const llm::RequestOutput& req_output,
+                             const std::vector<JsonTool>& tools = {},
+                             const std::string& tool_call_parser = "",
+                             const std::string& reasoning_parser = "",
+                             bool force_reasoning = false);
 };
 
 }  // namespace xllm_service

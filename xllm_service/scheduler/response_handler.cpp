@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <optional>
 
+#include "http_service/anthropic_adapter.h"
 #include "scheduler/xllm_chat_parse_bridge.h"
 #include "xllm/xllm/api_service/stream_output_parser.h"
 #include "xllm/xllm/api_service/utils.h"
@@ -435,6 +436,117 @@ bool ResponseHandler::send_delta_to_client(
   return true;
 }
 
+bool ResponseHandler::send_delta_to_client(
+    std::shared_ptr<AnthropicCallData> call_data,
+    const std::string& model,
+    const llm::RequestOutput& output,
+    AnthropicStreamState* stream_state,
+    std::shared_ptr<xllm::StreamOutputParser> stream_parser) {
+  std::vector<xllm::proto::AnthropicStreamEvent> events;
+
+  if (stream_parser && !output.outputs.empty()) {
+    stream_parser->check_resize_for_index(output.outputs.size() - 1);
+  }
+
+  for (const auto& seq_output : output.outputs) {
+    const auto& index = seq_output.index;
+    std::string cur_text = seq_output.text;
+
+    if (!cur_text.empty() && stream_parser && stream_parser->is_tool_call()) {
+      auto* parser = stream_parser->get_tool_call_parser(index);
+      if (parser) {
+        auto parse_result = parser->parse_streaming_increment(cur_text);
+        if (!parse_result.normal_text.empty()) {
+          auto result = add_anthropic_text_delta(model,
+                                                 output,
+                                                 parse_result.normal_text,
+                                                 stream_state,
+                                                 &events);
+          if (!result.ok) {
+            return call_data->finish_with_error(result.error);
+          }
+        }
+
+        for (const auto& call_item : parse_result.calls) {
+          stream_parser->set_has_tool_call(index, true);
+
+          std::string tool_call_id;
+          std::string function_name;
+          if (call_item.name.has_value()) {
+            tool_call_id = xllm::function_call::utils::generate_tool_call_id();
+            function_name = call_item.name.value();
+          }
+
+          auto result = add_anthropic_tool_delta(model,
+                                                 output,
+                                                 tool_call_id,
+                                                 function_name,
+                                                 call_item.parameters,
+                                                 stream_state,
+                                                 &events);
+          if (!result.ok) {
+            return call_data->finish_with_error(result.error);
+          }
+        }
+      }
+    } else if (!cur_text.empty()) {
+      auto result =
+          add_anthropic_text_delta(model, output, cur_text, stream_state,
+                                   &events);
+      if (!result.ok) {
+        return call_data->finish_with_error(result.error);
+      }
+    }
+
+    if (seq_output.finish_reason.has_value() && stream_parser &&
+        stream_parser->get_has_tool_call(index)) {
+      auto send_func = [&](const std::string& arguments, int tool_index) {
+        (void)tool_index;
+        auto result = add_anthropic_tool_delta(model,
+                                               output,
+                                               "",
+                                               "",
+                                               arguments,
+                                               stream_state,
+                                               &events);
+        if (!result.ok) {
+          return false;
+        }
+        return true;
+      };
+      if (!xllm::api_service::check_for_unstreamed_tool_args(
+              stream_parser, index, send_func)) {
+        return false;
+      }
+    }
+  }
+
+  if (output.finished) {
+    auto result =
+        finish_anthropic_stream(model, output, stream_state, &events);
+    if (!result.ok) {
+      return call_data->finish_with_error(result.error);
+    }
+  }
+
+  for (const auto& event : events) {
+    std::string sse;
+    std::string err_msg;
+    if (!anthropic_event_sse(event, &sse, &err_msg)) {
+      LOG(ERROR) << "Anthropic stream event json failed: " << err_msg;
+      return call_data->finish_with_error(err_msg);
+    }
+    if (!call_data->write(sse)) {
+      return false;
+    }
+  }
+
+  if (output.finished) {
+    return call_data->finish();
+  }
+  return true;
+}
+
 bool ResponseHandler::send_result_to_client(
     std::shared_ptr<ChatCallData> call_data,
     int64_t created_time,
@@ -573,6 +685,55 @@ bool ResponseHandler::send_result_to_client(
   }
 
   return call_data->write_and_finish(response);
+}
+
+bool ResponseHandler::send_result_to_client(
+    std::shared_ptr<AnthropicCallData> call_data,
+    const std::string& model,
+    const llm::RequestOutput& req_output,
+    const std::vector<JsonTool>& tools,
+    const std::string& tool_call_parser,
+    const std::string& reasoning_parser,
+    bool force_reasoning) {
+  auto& response = call_data->response();
+  llm::RequestOutput output = req_output;
+  const google::protobuf::RepeatedPtrField<::xllm::proto::ToolCall>*
+      tool_calls = nullptr;
+  std::optional<google::protobuf::RepeatedPtrField<::xllm::proto::ToolCall>>
+      parsed_tool_calls;
+
+  if (!output.outputs.empty() && !output.outputs.front().text.empty()) {
+    auto parsed = parse_chat_output_with_xllm(output.outputs.front().text,
+                                             tools,
+                                             model,
+                                             output.outputs.front()
+                                                 .finish_reason.value_or(""),
+                                             tool_call_parser,
+                                             reasoning_parser,
+                                             force_reasoning,
+                                             response.GetArena());
+    output.outputs.front().text = std::move(parsed.text);
+    if (!parsed.finish_reason.empty()) {
+      output.outputs.front().finish_reason = std::move(parsed.finish_reason);
+    }
+    if (parsed.tool_calls.has_value()) {
+      parsed_tool_calls = std::move(parsed.tool_calls.value());
+      tool_calls = &parsed_tool_calls.value();
+    }
+  }
+
+  auto result = fill_anthropic_resp(model, output, &response, tool_calls);
+  if (!result.ok) {
+    return call_data->finish_with_error(result.error);
+  }
+
+  std::string json_output;
+  std::string err_msg;
+  if (!anthropic_json(response, &json_output, &err_msg)) {
+    LOG(ERROR) << "Anthropic response json failed: " << err_msg;
+    return call_data->finish_with_error(err_msg);
+  }
+  return call_data->write_and_finish(json_output);
 }
 
 }  // namespace xllm_service

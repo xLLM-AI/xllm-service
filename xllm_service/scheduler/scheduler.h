@@ -61,6 +61,8 @@ class Scheduler final {
   // `handle_generation` will handle response with these callbacks.
   bool record_new_request(std::shared_ptr<ChatCallData> call_data,
                           std::shared_ptr<Request> request);
+  bool record_new_request(std::shared_ptr<AnthropicCallData> call_data,
+                          std::shared_ptr<Request> request);
   bool record_new_request(std::shared_ptr<CompletionCallData> call_data,
                           std::shared_ptr<Request> request);
   void finish_request(const std::string& service_request_id,

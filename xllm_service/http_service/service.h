@@ -56,6 +56,11 @@ class XllmHttpServiceImpl : public proto::XllmHttpService {
                        proto::HttpResponse* response,
                        ::google::protobuf::Closure* done) override;
 
+  void AnthropicMessages(::google::protobuf::RpcController* controller,
+                         const proto::HttpRequest* request,
+                         proto::HttpResponse* response,
+                         ::google::protobuf::Closure* done) override;
+
   void Embeddings(::google::protobuf::RpcController* controller,
                   const proto::HttpRequest* request,
                   proto::HttpResponse* response,

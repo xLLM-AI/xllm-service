@@ -16,6 +16,28 @@ cc_library(
 
 cc_library(
   NAME
+    anthropic_adapter
+  HDRS
+    anthropic_adapter.h
+  SRCS
+    anthropic_adapter.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/api_service/chat_json_parser.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/api_service/anthropic_stream_utils.cpp
+  INCLUDES
+    ${CMAKE_SOURCE_DIR}/third_party/xllm
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/core
+  DEPS
+    :chat_template
+    :common
+    glog::glog
+    nlohmann_json::nlohmann_json
+    proto_xllm
+)
+target_link_libraries(anthropic_adapter PUBLIC brpc-static leveldb::leveldb ZLIB::ZLIB protobuf::libprotobuf OpenSSL::SSL OpenSSL::Crypto)
+
+cc_library(
+  NAME
   xllm_http_service
   HDRS
     service.h
@@ -24,6 +46,7 @@ cc_library(
     service.cpp 
     request_tracer.cpp
   DEPS
+    :anthropic_adapter
     :chat_json_parser
     :common
     :request
@@ -54,5 +77,15 @@ cc_test(
     chat_json_parser_test.cpp
   DEPS
     :chat_json_parser
+    GTest::gtest_main
+)
+
+cc_test(
+  NAME
+    anthropic_adapter_test
+  SRCS
+    anthropic_adapter_test.cpp
+  DEPS
+    :anthropic_adapter
     GTest::gtest_main
 )

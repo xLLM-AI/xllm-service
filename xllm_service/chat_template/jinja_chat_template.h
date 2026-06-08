@@ -28,6 +28,17 @@ limitations under the License.
 namespace xllm_service {
 
 struct Message {
+  struct FunctionCall {
+    std::string name;
+    std::string arguments;
+  };
+
+  struct ToolCall {
+    std::string id;
+    std::string type;
+    FunctionCall function;
+  };
+
   struct MMUrl {
     std::string url;
   };
@@ -47,6 +58,7 @@ struct Message {
   };
 
   using MMContentVec = std::vector<MMContent>;
+  using ToolCallVec = std::vector<ToolCall>;
   using Content = std::variant<std::string, MMContentVec>;
 
   Message() = default;
@@ -58,6 +70,8 @@ struct Message {
 
   std::string role;
   Content content;
+  std::optional<ToolCallVec> tool_calls;
+  std::string tool_call_id;
 };
 using ChatMessages = std::vector<Message>;
 

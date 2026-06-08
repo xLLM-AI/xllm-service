@@ -22,6 +22,7 @@ service XllmHttpService {
   rpc Hello(HttpHelloRequest) returns (HttpHelloResponse) {}
   rpc Completions (HttpRequest) returns (HttpResponse) {}
   rpc ChatCompletions (HttpRequest) returns (HttpResponse) {}
+  rpc AnthropicMessages (HttpRequest) returns (HttpResponse) {}
   rpc Embeddings (HttpRequest) returns (HttpResponse) {}
   rpc Models (HttpRequest) returns (HttpResponse) {}
   rpc Metrics (HttpRequest) returns (HttpResponse) {}

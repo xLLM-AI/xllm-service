@@ -71,6 +71,7 @@ bool Master::setup_http_server() {
                               "/hello => Hello,"
                               "/v1/completions => Completions,"
                               "/v1/chat/completions => ChatCompletions,"
+                              "/v1/messages => AnthropicMessages,"
                               "/v1/embeddings => Embeddings,"
                               "/v1/models => Models,"
                               "/metrics => Metrics,") != 0) {
