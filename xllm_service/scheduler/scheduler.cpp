@@ -366,9 +366,8 @@ bool Scheduler::record_new_request(std::shared_ptr<ChatCallData> call_data,
   return true;
 }
 
-bool Scheduler::record_new_request(
-    std::shared_ptr<AnthropicCallData> call_data,
-    std::shared_ptr<Request> request) {
+bool Scheduler::record_new_request(std::shared_ptr<AnthropicCallData> call_data,
+                                   std::shared_ptr<Request> request) {
   {
     std::lock_guard<std::mutex> guard(request_mutex_);
     if (requests_.find(request->service_request_id) != requests_.end()) {
@@ -388,9 +387,8 @@ bool Scheduler::record_new_request(
         request->model, tool_call_parser_pref, reasoning_parser_pref);
     const bool force_reasoning = get_enable_thinking_from_request(
         request->chat_template_kwargs, parser_formats.reasoning_parser);
-    auto stream_state = request->stream
-                            ? std::make_shared<AnthropicStreamState>()
-                            : nullptr;
+    auto stream_state =
+        request->stream ? std::make_shared<AnthropicStreamState>() : nullptr;
     auto stream_parser =
         request->stream
             ? create_stream_output_parser_with_xllm(tools_for_parse,
@@ -420,11 +418,8 @@ bool Scheduler::record_new_request(
       }
 
       if (stream) {
-        return response_handler_.send_delta_to_client(call_data,
-                                                      model,
-                                                      req_output,
-                                                      *stream_state,
-                                                      stream_parser);
+        return response_handler_.send_delta_to_client(
+            call_data, model, req_output, *stream_state, stream_parser);
       } else if (!req_output.finished_on_prefill_instance) {
         return response_handler_.send_result_to_client(call_data,
                                                        model,

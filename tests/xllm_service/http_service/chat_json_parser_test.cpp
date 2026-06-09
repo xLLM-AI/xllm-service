@@ -16,6 +16,7 @@ limitations under the License.
 #include "http_service/chat_json_parser.h"
 
 #include <gtest/gtest.h>
+
 #include <nlohmann/json.hpp>
 
 namespace xllm_service {
@@ -126,8 +127,7 @@ TEST(ChatJsonParserTest, NonObjectMessageReturnsError) {
 }
 
 TEST(ChatJsonParserTest, NonObjectItemReturnsError) {
-  expect_error(R"({"messages": [{"content": ["bad"]}]})",
-               "Content array item");
+  expect_error(R"({"messages": [{"content": ["bad"]}]})", "Content array item");
 }
 
 TEST(ChatJsonParserTest, MissingTypeReturnsError) {

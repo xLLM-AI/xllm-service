@@ -17,9 +17,9 @@ limitations under the License.
 
 #include <google/protobuf/util/json_util.h>
 #include <json2pb/pb_to_json.h>
-#include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <utility>
 
@@ -39,8 +39,7 @@ AnthropicAdaptResult error_result(std::string error) {
   return AnthropicAdaptResult{false, std::move(error)};
 }
 
-std::string system_text(
-    const xllm::proto::AnthropicContentBlockList& blocks) {
+std::string system_text(const xllm::proto::AnthropicContentBlockList& blocks) {
   std::string text;
   for (const auto& block : blocks.blocks()) {
     text += block.text();
@@ -56,8 +55,7 @@ AnthropicAdaptResult check_text_blocks(
                           block.type());
     }
     if (!block.has_text()) {
-      return error_result(
-          "Missing text in Anthropic text content block.");
+      return error_result("Missing text in Anthropic text content block.");
     }
   }
   return ok_result();
@@ -91,8 +89,7 @@ AnthropicAdaptResult tool_result_text(
     if (type_iter == item.fields().end() ||
         type_iter->second.string_value() != "text" ||
         text_iter == item.fields().end()) {
-      return error_result(
-          "Unsupported Anthropic tool_result content block.");
+      return error_result("Unsupported Anthropic tool_result content block.");
     }
     if (!first) {
       *text += '\n';
@@ -105,8 +102,7 @@ AnthropicAdaptResult tool_result_text(
 
 AnthropicAdaptResult add_tool_use(
     const xllm::proto::AnthropicContentBlock& block,
-    google::protobuf::RepeatedPtrField<xllm::proto::ToolCall>*
-        proto_tool_calls,
+    google::protobuf::RepeatedPtrField<xllm::proto::ToolCall>* proto_tool_calls,
     Message::ToolCallVec* tool_calls) {
   if (!block.has_id()) {
     return error_result("Anthropic tool_use id is required.");
@@ -120,8 +116,8 @@ AnthropicAdaptResult add_tool_use(
   proto_call->set_type("function");
   auto* proto_function = proto_call->mutable_function();
   proto_function->set_name(block.name());
-  proto_function->set_arguments(
-      block.has_input() ? struct_json(block.input()) : "{}");
+  proto_function->set_arguments(block.has_input() ? struct_json(block.input())
+                                                  : "{}");
 
   Message::ToolCall tool_call;
   tool_call.id = block.id();
@@ -185,8 +181,7 @@ AnthropicAdaptResult add_tool_defs(
   return ok_result();
 }
 
-std::string tool_choice(
-    const xllm::proto::AnthropicMessagesRequest& request) {
+std::string tool_choice(const xllm::proto::AnthropicMessagesRequest& request) {
   if (!request.has_tool_choice()) {
     return request.tools_size() > 0 ? "auto" : "none";
   }
@@ -202,8 +197,8 @@ std::string tool_choice(
     if (!choice.has_name()) {
       return "auto";
     }
-    nlohmann::json choice_json = {
-        {"type", "function"}, {"function", {{"name", choice.name()}}}};
+    nlohmann::json choice_json = {{"type", "function"},
+                                  {"function", {{"name", choice.name()}}}};
     return choice_json.dump();
   }
   return "auto";
@@ -266,11 +261,8 @@ AnthropicAdaptResult add_content_msg(
             return result;
           }
         } else if (block.type() == "tool_result") {
-          auto result = add_tool_result(block,
-                                        src_message.role(),
-                                        chat_request,
-                                        messages,
-                                        &mm_content);
+          auto result = add_tool_result(
+              block, src_message.role(), chat_request, messages, &mm_content);
           if (!result.ok) {
             return result;
           }
@@ -349,8 +341,7 @@ void fill_usage(const llm::RequestOutput& request_output,
   }
   const auto& usage = request_output.usage.value();
   auto* proto_usage = response->mutable_usage();
-  proto_usage->set_input_tokens(
-      static_cast<int32_t>(usage.num_prompt_tokens));
+  proto_usage->set_input_tokens(static_cast<int32_t>(usage.num_prompt_tokens));
   proto_usage->set_output_tokens(
       static_cast<int32_t>(usage.num_generated_tokens));
 }
@@ -358,8 +349,7 @@ void fill_usage(const llm::RequestOutput& request_output,
 void add_message_start(const std::string& model,
                        const llm::RequestOutput& request_output,
                        AnthropicStreamState* state,
-                       std::vector<xllm::proto::AnthropicStreamEvent>*
-                           events) {
+                       std::vector<xllm::proto::AnthropicStreamEvent>* events) {
   if (state->message_started) {
     return;
   }
@@ -450,17 +440,15 @@ void add_text_delta(const std::string& text,
   events->push_back(std::move(event));
 }
 
-void add_message_delta(
-    const llm::RequestOutput& request_output,
-    const std::string& finish_reason,
-    bool has_tool_call,
-    std::vector<xllm::proto::AnthropicStreamEvent>* events) {
+void add_message_delta(const llm::RequestOutput& request_output,
+                       const std::string& finish_reason,
+                       bool has_tool_call,
+                       std::vector<xllm::proto::AnthropicStreamEvent>* events) {
   xllm::proto::AnthropicStreamEvent event;
   event.set_type("message_delta");
   auto* delta = event.mutable_delta();
-  delta->set_stop_reason(
-      xllm::api_service::get_stream_stop_reason(
-          true, has_tool_call, finish_reason));
+  delta->set_stop_reason(xllm::api_service::get_stream_stop_reason(
+      true, has_tool_call, finish_reason));
 
   auto* usage = event.mutable_usage();
   if (request_output.usage.has_value()) {
@@ -529,7 +517,8 @@ AnthropicAdaptResult fill_chat_req(
   }
   chat_request->set_tool_choice(tool_choice(anthropic_request));
 
-  auto system_result = add_system_msg(anthropic_request, chat_request, messages);
+  auto system_result =
+      add_system_msg(anthropic_request, chat_request, messages);
   if (!system_result.ok) {
     return system_result;
   }
@@ -672,7 +661,8 @@ AnthropicAdaptResult finish_anthropic_stream(
       finish_reason = seq_output.finish_reason.value();
     }
   }
-  add_message_delta(request_output, finish_reason, state.has_tool_call, &events);
+  add_message_delta(
+      request_output, finish_reason, state.has_tool_call, &events);
   add_message_stop(&events);
   return ok_result();
 }

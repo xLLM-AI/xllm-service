@@ -53,8 +53,8 @@ AnthropicAdaptResult fill_anthropic_resp(
     const std::string& model,
     const llm::RequestOutput& request_output,
     xllm::proto::AnthropicMessagesResponse* response,
-    const google::protobuf::RepeatedPtrField<xllm::proto::ToolCall>* tool_calls =
-        nullptr);
+    const google::protobuf::RepeatedPtrField<xllm::proto::ToolCall>*
+        tool_calls = nullptr);
 
 AnthropicAdaptResult fill_anthropic_stream_events(
     const std::string& model,

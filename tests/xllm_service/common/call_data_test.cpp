@@ -38,14 +38,13 @@ TEST(CallDataTest, NonStreamWriteAndFinishTracesAttachment) {
   std::vector<std::string> trace_chunks;
 
   {
-    ChatCallData call_data(&controller,
-                           /*stream=*/false,
-                           &done,
-                           &request,
-                           &response,
-                           [&](const std::string& chunk) {
-                             trace_chunks.push_back(chunk);
-                           });
+    ChatCallData call_data(
+        &controller,
+        /*stream=*/false,
+        &done,
+        &request,
+        &response,
+        [&](const std::string& chunk) { trace_chunks.push_back(chunk); });
 
     ASSERT_FALSE(done.ran);
     ASSERT_TRUE(call_data.write_and_finish("{\"id\":\"chatcmpl-test\"}"));

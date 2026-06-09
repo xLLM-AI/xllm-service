@@ -457,11 +457,8 @@ bool ResponseHandler::send_delta_to_client(
       if (parser) {
         auto parse_result = parser->parse_streaming_increment(cur_text);
         if (!parse_result.normal_text.empty()) {
-          auto result = add_anthropic_text_delta(model,
-                                                 output,
-                                                 parse_result.normal_text,
-                                                 stream_state,
-                                                 events);
+          auto result = add_anthropic_text_delta(
+              model, output, parse_result.normal_text, stream_state, events);
           if (!result.ok) {
             return call_data->finish_with_error(result.error);
           }
@@ -490,9 +487,8 @@ bool ResponseHandler::send_delta_to_client(
         }
       }
     } else if (!cur_text.empty()) {
-      auto result =
-          add_anthropic_text_delta(model, output, cur_text, stream_state,
-                                   events);
+      auto result = add_anthropic_text_delta(
+          model, output, cur_text, stream_state, events);
       if (!result.ok) {
         return call_data->finish_with_error(result.error);
       }
@@ -502,13 +498,8 @@ bool ResponseHandler::send_delta_to_client(
         stream_parser->get_has_tool_call(index)) {
       auto send_func = [&](const std::string& arguments, int tool_index) {
         (void)tool_index;
-        auto result = add_anthropic_tool_delta(model,
-                                               output,
-                                               "",
-                                               "",
-                                               arguments,
-                                               stream_state,
-                                               events);
+        auto result = add_anthropic_tool_delta(
+            model, output, "", "", arguments, stream_state, events);
         if (!result.ok) {
           return false;
         }
@@ -522,8 +513,7 @@ bool ResponseHandler::send_delta_to_client(
   }
 
   if (output.finished) {
-    auto result =
-        finish_anthropic_stream(model, output, stream_state, events);
+    auto result = finish_anthropic_stream(model, output, stream_state, events);
     if (!result.ok) {
       return call_data->finish_with_error(result.error);
     }
@@ -703,15 +693,15 @@ bool ResponseHandler::send_result_to_client(
       parsed_tool_calls;
 
   if (!output.outputs.empty() && !output.outputs.front().text.empty()) {
-    auto parsed = parse_chat_output_with_xllm(output.outputs.front().text,
-                                             tools,
-                                             model,
-                                             output.outputs.front()
-                                                 .finish_reason.value_or(""),
-                                             tool_call_parser,
-                                             reasoning_parser,
-                                             force_reasoning,
-                                             response.GetArena());
+    auto parsed = parse_chat_output_with_xllm(
+        output.outputs.front().text,
+        tools,
+        model,
+        output.outputs.front().finish_reason.value_or(""),
+        tool_call_parser,
+        reasoning_parser,
+        force_reasoning,
+        response.GetArena());
     output.outputs.front().text = std::move(parsed.text);
     if (!parsed.finish_reason.empty()) {
       output.outputs.front().finish_reason = std::move(parsed.finish_reason);

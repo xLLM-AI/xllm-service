@@ -16,16 +16,15 @@ limitations under the License.
 #include "http_service/anthropic_adapter.h"
 
 #include <gtest/gtest.h>
-#include <nlohmann/json.hpp>
 
+#include <nlohmann/json.hpp>
 #include <string>
 #include <variant>
 
 namespace xllm_service {
 namespace {
 
-xllm::proto::AnthropicMessagesRequest parse_request(
-    const std::string& json) {
+xllm::proto::AnthropicMessagesRequest parse_request(const std::string& json) {
   xllm::proto::AnthropicMessagesRequest request;
   auto result = parse_anthropic_json(json, &request);
   EXPECT_TRUE(result.ok) << result.error;
@@ -43,8 +42,7 @@ AnthropicAdaptResult adapt_request(
   return fill_chat_req(request, chat_request, messages);
 }
 
-void expect_reject(const std::string& json,
-                   const std::string& expected_error) {
+void expect_reject(const std::string& json, const std::string& expected_error) {
   auto request = parse_request(json);
   xllm::proto::ChatRequest chat_request;
   ChatMessages messages;
@@ -143,8 +141,8 @@ TEST(AnthropicAdapterTest, MapsTextBlocksForSystemAndMessages) {
 
   ASSERT_EQ(messages.size(), 2);
   EXPECT_EQ(text_content(messages[0]), "rule style");
-  ASSERT_TRUE(std::holds_alternative<Message::MMContentVec>(
-      messages[1].content));
+  ASSERT_TRUE(
+      std::holds_alternative<Message::MMContentVec>(messages[1].content));
   const auto& content = std::get<Message::MMContentVec>(messages[1].content);
   ASSERT_EQ(content.size(), 2);
   EXPECT_EQ(content[0].type, "text");
@@ -616,9 +614,8 @@ TEST(AnthropicAdapterTest, BuildsToolStreamEvents) {
 
   llm::RequestOutput text;
   text.request_id = "anthropiccmpl-test";
-  auto result =
-      add_anthropic_text_delta("test-model", text, "Let me check ", state,
-                               events);
+  auto result = add_anthropic_text_delta(
+      "test-model", text, "Let me check ", state, events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 3);
   EXPECT_EQ(events[0].type(), "message_start");
@@ -628,13 +625,8 @@ TEST(AnthropicAdapterTest, BuildsToolStreamEvents) {
   EXPECT_EQ(events[2].delta().type(), "text_delta");
 
   events.clear();
-  result = add_anthropic_tool_delta("test-model",
-                                    text,
-                                    "call_1",
-                                    "get_weather",
-                                    R"({"city")",
-                                    state,
-                                    events);
+  result = add_anthropic_tool_delta(
+      "test-model", text, "call_1", "get_weather", R"({"city")", state, events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 3);
   EXPECT_EQ(events[0].type(), "content_block_stop");
@@ -651,13 +643,8 @@ TEST(AnthropicAdapterTest, BuildsToolStreamEvents) {
   EXPECT_EQ(events[2].delta().partial_json(), R"({"city")");
 
   events.clear();
-  result = add_anthropic_tool_delta("test-model",
-                                    text,
-                                    "",
-                                    "",
-                                    R"(: "Beijing"})",
-                                    state,
-                                    events);
+  result = add_anthropic_tool_delta(
+      "test-model", text, "", "", R"(: "Beijing"})", state, events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 1);
   EXPECT_EQ(events[0].type(), "content_block_delta");
