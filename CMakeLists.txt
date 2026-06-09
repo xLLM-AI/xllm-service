@@ -191,4 +191,4 @@ link_directories(${BRPC_OUTPUT_DIR}/lib)
 # add subdirectories
 add_subdirectory(third_party)
 add_subdirectory(xllm_service)
-
+add_subdirectory(tests)
