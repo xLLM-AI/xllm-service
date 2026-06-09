@@ -80,7 +80,7 @@ class ResponseHandler final {
   bool send_delta_to_client(std::shared_ptr<AnthropicCallData> call_data,
                             const std::string& model,
                             const llm::RequestOutput& output,
-                            AnthropicStreamState* stream_state,
+                            AnthropicStreamState& stream_state,
                             std::shared_ptr<xllm::StreamOutputParser>
                                 stream_parser = nullptr);
   bool send_result_to_client(std::shared_ptr<AnthropicCallData> call_data,

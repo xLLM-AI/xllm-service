@@ -423,7 +423,7 @@ bool Scheduler::record_new_request(
         return response_handler_.send_delta_to_client(call_data,
                                                       model,
                                                       req_output,
-                                                      stream_state.get(),
+                                                      *stream_state,
                                                       stream_parser);
       } else if (!req_output.finished_on_prefill_instance) {
         return response_handler_.send_result_to_client(call_data,

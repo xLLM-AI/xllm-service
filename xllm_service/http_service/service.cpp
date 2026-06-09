@@ -550,11 +550,6 @@ void XllmHttpServiceImpl::AnthropicMessages(
     LOG(ERROR) << "adapt anthropic request failed: " << adapt_result.error;
     return;
   }
-  if (messages.empty()) {
-    cntl->SetFailed("Messages is empty!");
-    LOG(ERROR) << "Messages is empty!";
-    return;
-  }
   req_pb->set_request_id(new_anthropic_id());
 
   auto service_request = generate_request(req_pb, "/v1/messages");

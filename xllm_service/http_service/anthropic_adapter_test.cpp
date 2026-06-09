@@ -527,13 +527,11 @@ TEST(AnthropicAdapterTest, BuildsToolUseAnthropicJson) {
   auto json = nlohmann::json::parse(json_str);
 
   EXPECT_EQ(json["stop_reason"], "tool_use");
-  ASSERT_EQ(json["content"].size(), 2);
-  EXPECT_EQ(json["content"][0]["type"], "text");
-  EXPECT_EQ(json["content"][0]["text"], "");
-  EXPECT_EQ(json["content"][1]["type"], "tool_use");
-  EXPECT_EQ(json["content"][1]["id"], "call_1");
-  EXPECT_EQ(json["content"][1]["name"], "get_weather");
-  EXPECT_EQ(json["content"][1]["input"]["city"], "Beijing");
+  ASSERT_EQ(json["content"].size(), 1);
+  EXPECT_EQ(json["content"][0]["type"], "tool_use");
+  EXPECT_EQ(json["content"][0]["id"], "call_1");
+  EXPECT_EQ(json["content"][0]["name"], "get_weather");
+  EXPECT_EQ(json["content"][0]["input"]["city"], "Beijing");
 }
 
 TEST(AnthropicAdapterTest, BuildsTextStreamEvents) {
@@ -548,7 +546,7 @@ TEST(AnthropicAdapterTest, BuildsTextStreamEvents) {
   first.outputs.push_back(std::move(first_seq));
 
   auto result =
-      fill_anthropic_stream_events("test-model", first, &state, &events);
+      fill_anthropic_stream_events("test-model", first, state, events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 3);
   EXPECT_EQ(events[0].type(), "message_start");
@@ -572,7 +570,7 @@ TEST(AnthropicAdapterTest, BuildsTextStreamEvents) {
   second.outputs.push_back(std::move(second_seq));
   events.clear();
 
-  result = fill_anthropic_stream_events("test-model", second, &state, &events);
+  result = fill_anthropic_stream_events("test-model", second, state, events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 1);
   EXPECT_EQ(events[0].type(), "content_block_delta");
@@ -591,7 +589,7 @@ TEST(AnthropicAdapterTest, BuildsTextStreamEvents) {
   final.usage = usage;
   events.clear();
 
-  result = fill_anthropic_stream_events("test-model", final, &state, &events);
+  result = fill_anthropic_stream_events("test-model", final, state, events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 3);
   EXPECT_EQ(events[0].type(), "content_block_stop");
@@ -619,8 +617,8 @@ TEST(AnthropicAdapterTest, BuildsToolStreamEvents) {
   llm::RequestOutput text;
   text.request_id = "anthropiccmpl-test";
   auto result =
-      add_anthropic_text_delta("test-model", text, "Let me check ", &state,
-                               &events);
+      add_anthropic_text_delta("test-model", text, "Let me check ", state,
+                               events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 3);
   EXPECT_EQ(events[0].type(), "message_start");
@@ -635,8 +633,8 @@ TEST(AnthropicAdapterTest, BuildsToolStreamEvents) {
                                     "call_1",
                                     "get_weather",
                                     R"({"city")",
-                                    &state,
-                                    &events);
+                                    state,
+                                    events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 3);
   EXPECT_EQ(events[0].type(), "content_block_stop");
@@ -658,8 +656,8 @@ TEST(AnthropicAdapterTest, BuildsToolStreamEvents) {
                                     "",
                                     "",
                                     R"(: "Beijing"})",
-                                    &state,
-                                    &events);
+                                    state,
+                                    events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 1);
   EXPECT_EQ(events[0].type(), "content_block_delta");
@@ -679,7 +677,7 @@ TEST(AnthropicAdapterTest, BuildsToolStreamEvents) {
   final.usage = usage;
   events.clear();
 
-  result = finish_anthropic_stream("test-model", final, &state, &events);
+  result = finish_anthropic_stream("test-model", final, state, events);
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(events.size(), 3);
   EXPECT_EQ(events[0].type(), "content_block_stop");

@@ -440,7 +440,7 @@ bool ResponseHandler::send_delta_to_client(
     std::shared_ptr<AnthropicCallData> call_data,
     const std::string& model,
     const llm::RequestOutput& output,
-    AnthropicStreamState* stream_state,
+    AnthropicStreamState& stream_state,
     std::shared_ptr<xllm::StreamOutputParser> stream_parser) {
   std::vector<xllm::proto::AnthropicStreamEvent> events;
 
@@ -461,7 +461,7 @@ bool ResponseHandler::send_delta_to_client(
                                                  output,
                                                  parse_result.normal_text,
                                                  stream_state,
-                                                 &events);
+                                                 events);
           if (!result.ok) {
             return call_data->finish_with_error(result.error);
           }
@@ -483,7 +483,7 @@ bool ResponseHandler::send_delta_to_client(
                                                  function_name,
                                                  call_item.parameters,
                                                  stream_state,
-                                                 &events);
+                                                 events);
           if (!result.ok) {
             return call_data->finish_with_error(result.error);
           }
@@ -492,7 +492,7 @@ bool ResponseHandler::send_delta_to_client(
     } else if (!cur_text.empty()) {
       auto result =
           add_anthropic_text_delta(model, output, cur_text, stream_state,
-                                   &events);
+                                   events);
       if (!result.ok) {
         return call_data->finish_with_error(result.error);
       }
@@ -508,7 +508,7 @@ bool ResponseHandler::send_delta_to_client(
                                                "",
                                                arguments,
                                                stream_state,
-                                               &events);
+                                               events);
         if (!result.ok) {
           return false;
         }
@@ -523,7 +523,7 @@ bool ResponseHandler::send_delta_to_client(
 
   if (output.finished) {
     auto result =
-        finish_anthropic_stream(model, output, stream_state, &events);
+        finish_anthropic_stream(model, output, stream_state, events);
     if (!result.ok) {
       return call_data->finish_with_error(result.error);
     }
