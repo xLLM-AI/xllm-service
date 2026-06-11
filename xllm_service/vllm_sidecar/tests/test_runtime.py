@@ -102,6 +102,10 @@ def _args(**kwargs):
         keepalive_interval=2.0,
         health_timeout=1.0,
         health_fail_threshold=3,
+        xllm_service_url="http://127.0.0.1:9998",
+        internal_token="",
+        heartbeat_interval=3.0,
+        metrics_url="http://127.0.0.1:18000/metrics",
         log_level="INFO",
     )
     values.update(kwargs)
