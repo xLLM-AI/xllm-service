@@ -76,6 +76,13 @@ class XllmHttpServiceImpl : public proto::XllmHttpService {
                proto::HttpResponse* response,
                ::google::protobuf::Closure* done) override;
 
+  // Internal heartbeat from non-brpc backends (vLLM sidecar): JSON body of
+  // proto::HeartbeatRequest carrying LoadMetrics/LatencyMetrics.
+  void Heartbeat(::google::protobuf::RpcController* controller,
+                 const proto::HttpRequest* request,
+                 proto::HttpResponse* response,
+                 ::google::protobuf::Closure* done) override;
+
  private:
   template <typename T>
   std::shared_ptr<Request> generate_request(T* req_pb,

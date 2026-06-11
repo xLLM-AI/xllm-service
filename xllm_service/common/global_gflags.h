@@ -84,3 +84,5 @@ DECLARE_int32(readiness_check_interval_s);
 DECLARE_string(default_backend_type);
 
 DECLARE_int32(vllm_http_timeout_ms);
+
+DECLARE_string(internal_api_token);

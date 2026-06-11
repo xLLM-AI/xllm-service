@@ -97,9 +97,48 @@ kill <sidecar_pid> && sleep 7
 etcdctl get --prefix XLLM:DEFAULT:              # empty
 ```
 
+## Heartbeat (load metrics)
+
+Alongside lease keepalive, the sidecar scrapes vLLM's Prometheus `/metrics` and
+POSTs a heartbeat to the master every `--heartbeat-interval` seconds:
+
+    POST <xllm-service-url>/v1/internal/heartbeat
+    X-Internal-Token: <token>            # only if configured
+    {"name","incarnation_id","load_metrics":{...},"latency_metrics":{...}}
+
+The master reuses the same `handle_instance_heartbeat` path as the brpc backends:
+the JSON is parsed into a `proto::HeartbeatRequest` and feeds the scheduler's
+in-memory load metrics (which the master then publishes to `XLLM:LOADMETRICS:`
+for non-master nodes). Mapping (pinned to vLLM 0.21):
+
+| vLLM metric | heartbeat field |
+|---|---|
+| `vllm:num_requests_waiting` | `load_metrics.waiting_requests_num` |
+| `vllm:gpu_cache_usage_perc` | `load_metrics.gpu_cache_usage_perc` |
+| `vllm:time_to_first_token_seconds` | `latency_metrics.recent_max_ttft` (ms, interval avg) |
+| `vllm:time_per_output_token_seconds` | `latency_metrics.recent_max_tbt` (ms, interval avg) |
+
+Heartbeat is **metrics-only**: liveness stays with the lease. A `409` (unknown /
+stale incarnation) makes the sidecar re-register; a transient `/metrics` or POST
+failure is logged and skipped — the lease still holds the instance up.
+
+### Heartbeat flags
+
+| flag | default | notes |
+|---|---|---|
+| `--xllm-service-url` | `http://127.0.0.1:9998` | master HTTP base for `/v1/internal/heartbeat` |
+| `--internal-token` | `""` | `X-Internal-Token`; must match master `--internal_api_token`; also `XLLM_INTERNAL_TOKEN` |
+| `--heartbeat-interval` | `3` | seconds between metrics heartbeats |
+| `--metrics-url` | `<vllm-url>/metrics` | vLLM Prometheus endpoint |
+
 ## Scope
 
-This PR provides **liveness-only** auto-registration via the etcd lease. Load
-metrics (queue depth, KV-cache usage), an HTTP `/register`+`/heartbeat` contract
-on the master, and `X-Internal-Token` auth are intentionally left to a follow-up
-PR — none are needed for single-instance routing today.
+Registration is lease-based (liveness); heartbeat adds load/latency metrics for
+load-aware routing. The KV-cache event bridge (CacheAwareRouting) and
+disaggregated-PD linking remain out of scope.
+
+
+
+## Internal heartbeat security
+
+The sidecar posts load metrics to `/v1/internal/heartbeat`. Expose this endpoint only on trusted networks. For production deployments, set `--internal_api_token` on the master and pass the same value to the sidecar with `--internal-token` or `XLLM_INTERNAL_TOKEN`.

@@ -156,3 +156,9 @@ DEFINE_string(default_backend_type,
 DEFINE_int32(vllm_http_timeout_ms,
              60000,
              "HTTP timeout (ms) when forwarding to vLLM backend.");
+
+DEFINE_string(internal_api_token,
+              "",
+              "Shared token guarding the internal Heartbeat endpoint via the "
+              "X-Internal-Token header. Empty value disables the check "
+              "(backwards compatible).");

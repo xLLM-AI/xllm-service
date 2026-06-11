@@ -37,6 +37,7 @@ limitations under the License.
 #include "http_service/anthropic_adapter.h"
 #include "http_service/chat_json_parser.h"
 #include "scheduler/scheduler.h"
+#include "xllm_rpc_service.pb.h"
 #include "xllm_service.pb.h"
 
 namespace xllm_service {
@@ -729,6 +730,64 @@ void XllmHttpServiceImpl::Metrics(::google::protobuf::RpcController* controller,
                                   ::google::protobuf::Closure* done) {
   ClosureGuard done_guard(done);
   // TODO: implement metrics endpoint
+}
+
+void XllmHttpServiceImpl::Heartbeat(
+    ::google::protobuf::RpcController* controller,
+    const proto::HttpRequest* request,
+    proto::HttpResponse* response,
+    ::google::protobuf::Closure* done) {
+  ClosureGuard done_guard(done);
+  auto cntl = reinterpret_cast<brpc::Controller*>(controller);
+  if (!cntl) {
+    return;
+  }
+
+  auto reply = [&](int32_t status_code, const char* body) {
+    cntl->http_response().set_status_code(status_code);
+    cntl->http_response().set_content_type("application/json");
+    cntl->response_attachment().append(body);
+  };
+
+  // Optional static shared-token auth; skip the check when no token configured
+  // (backward compatible with deployments that don't set internal_api_token).
+  const std::string& expected = options_.internal_api_token();
+  if (!expected.empty()) {
+    const std::string* got = cntl->http_request().GetHeader("X-Internal-Token");
+    if (got == nullptr || *got != expected) {
+      LOG(WARNING) << "Heartbeat rejected: invalid X-Internal-Token";
+      reply(401, "{\"error\":\"invalid internal token\"}");
+      return;
+    }
+  }
+
+  // Body is JSON of proto HeartbeatRequest (snake_case field names accepted).
+  proto::HeartbeatRequest req;
+  const std::string attachment = cntl->request_attachment().to_string();
+  google::protobuf::util::JsonParseOptions opts;
+  opts.ignore_unknown_fields = true;
+  const auto status =
+      google::protobuf::util::JsonStringToMessage(attachment, &req, opts);
+  if (!status.ok()) {
+    LOG(ERROR) << "Heartbeat parse failed: " << status.ToString();
+    reply(400, "{\"error\":\"invalid heartbeat json\"}");
+    return;
+  }
+  if (req.name().empty()) {
+    reply(400, "{\"error\":\"missing instance name\"}");
+    return;
+  }
+
+  // Reuse the RPC heartbeat schema/path so HTTP sidecars and brpc
+  // backends update scheduler state consistently: liveness/incarnation,
+  // LoadMetrics, and LatencyMetrics. vLLM cache_event is empty.
+  if (!scheduler_ || !scheduler_->handle_instance_heartbeat(&req)) {
+    // Unknown instance or stale incarnation -> ask the sidecar to re-register.
+    reply(409, "{\"error\":\"instance not registered or stale incarnation\"}");
+    return;
+  }
+
+  reply(200, "{\"ok\":true}");
 }
 
 }  // namespace xllm_service

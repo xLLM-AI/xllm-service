@@ -74,7 +74,8 @@ bool Master::setup_http_server() {
                               "/v1/messages => AnthropicMessages,"
                               "/v1/embeddings => Embeddings,"
                               "/v1/models => Models,"
-                              "/metrics => Metrics,") != 0) {
+                              "/metrics => Metrics,"
+                              "/v1/internal/heartbeat => Heartbeat,") != 0) {
     LOG(FATAL) << "Fail to add http service";
     return false;
   }
@@ -236,7 +237,8 @@ int main(int argc, char* argv[]) {
       .tool_call_parser(FLAGS_tool_call_parser)
       .reasoning_parser(FLAGS_reasoning_parser)
       .default_backend_type(FLAGS_default_backend_type)
-      .vllm_http_timeout_ms(FLAGS_vllm_http_timeout_ms);
+      .vllm_http_timeout_ms(FLAGS_vllm_http_timeout_ms)
+      .internal_api_token(FLAGS_internal_api_token);
 
   xllm_service::Master master(options);
 

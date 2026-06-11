@@ -30,12 +30,16 @@ import logging
 import os
 import signal
 import threading
+import time
 import uuid
 from types import FrameType
+
+import requests
 
 from .etcd_registry import EtcdGatewayClient, EtcdError
 from .health import VllmHealthProbe
 from .meta import InstanceType, build_instance_key, build_instance_meta
+from .metrics import VllmMetricsScraper
 
 logger = logging.getLogger("vllm_sidecar")
 
@@ -57,6 +61,14 @@ class Sidecar:
         self._stop = threading.Event()
         self._lease_id = None
         self._incarnation_id = None
+        # heartbeat (LoadMetrics/LatencyMetrics) -> master HTTP endpoint
+        self._hb_url = args.xllm_service_url.rstrip("/") + "/v1/internal/heartbeat"
+        self._metrics = VllmMetricsScraper(
+            args.metrics_url, timeout=args.health_timeout
+        )
+        self._last_hb = 0.0
+        # Reuse one connection for the periodic heartbeat POSTs (keep-alive).
+        self._hb_session = requests.Session()
 
     # --- registration primitives ------------------------------------------
 
@@ -131,6 +143,7 @@ class Sidecar:
             if self._health.is_healthy():
                 fail = 0
                 self._keepalive_or_reregister()
+                self._maybe_heartbeat()
             else:
                 fail += 1
                 logger.warning(
@@ -172,6 +185,51 @@ class Sidecar:
     def _on_signal(self, signum: int, _frame: FrameType | None) -> None:
         logger.info("received signal %d, shutting down", signum)
         self._stop.set()
+
+    # --- heartbeat (metrics) ----------------------------------------------
+
+    def _maybe_heartbeat(self) -> None:
+        """POST LoadMetrics/LatencyMetrics on cadence while registered."""
+        if not self._registered:
+            return
+        now = time.monotonic()
+        if now - self._last_hb < self._args.heartbeat_interval:
+            return
+        self._last_hb = now
+        self._send_heartbeat()
+
+    def _send_heartbeat(self) -> None:
+        metrics = self._metrics.scrape()
+        if metrics is None:
+            return  # /metrics transiently unreachable; lease still holds liveness
+        body = {
+            "name": self._args.register_addr,
+            "incarnation_id": self._incarnation_id,
+            "load_metrics": metrics["load_metrics"],
+            "latency_metrics": metrics["latency_metrics"],
+        }
+        headers = {"Content-Type": "application/json"}
+        if self._args.internal_token:
+            headers["X-Internal-Token"] = self._args.internal_token
+        try:
+            r = self._hb_session.post(
+                self._hb_url,
+                json=body,
+                headers=headers,
+                timeout=self._args.health_timeout,
+            )
+        except requests.RequestException as e:
+            logger.debug("heartbeat POST failed: %s", e)
+            return
+        if r.status_code == 409:
+            # master doesn't know this incarnation -> re-register and resync id
+            logger.warning("heartbeat 409 (stale/unknown), re-registering")
+            self._lease_id = None
+            self._register()
+        elif r.status_code == 401:
+            logger.error("heartbeat 401: invalid --internal-token")
+        elif r.status_code != 200:
+            logger.warning("heartbeat -> HTTP %d: %s", r.status_code, r.text[:120])
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -234,6 +292,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="consecutive failed probes before deregistering",
     )
+    # heartbeat (LoadMetrics/LatencyMetrics reporting)
+    p.add_argument(
+        "--xllm-service-url",
+        default="http://127.0.0.1:9998",
+        help="master HTTP base URL for /v1/internal/heartbeat",
+    )
+    p.add_argument(
+        "--internal-token",
+        default=os.environ.get("XLLM_INTERNAL_TOKEN", ""),
+        help="X-Internal-Token; must match master --internal_api_token",
+    )
+    p.add_argument(
+        "--heartbeat-interval",
+        type=float,
+        default=3.0,
+        help="seconds between metrics heartbeats",
+    )
+    p.add_argument(
+        "--metrics-url",
+        default=None,
+        help="vLLM Prometheus endpoint (default: <vllm-url>/metrics)",
+    )
     p.add_argument("--log-level", default="INFO")
     return p
 
@@ -252,6 +332,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not args.register_addr:
         args.register_addr = _derive_addr(args.vllm_url)
+    if not args.metrics_url:
+        args.metrics_url = args.vllm_url.rstrip("/") + "/metrics"
     logger.info(
         "sidecar starting: register %s as backend_type=%s type=%s",
         args.register_addr,

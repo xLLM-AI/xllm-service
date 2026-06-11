@@ -78,7 +78,7 @@ Set `STOP_VLLM=0` to leave an externally managed vLLM process running.
 ## Scope
 
 This demo covers the minimal vLLM backend path: OpenAI-compatible request
-forwarding, model listing, streaming/non-streaming responses, and sidecar-based
-etcd lease registration. Cache-aware
+forwarding, model listing, streaming/non-streaming responses, sidecar-based
+etcd lease registration, and optional vLLM metrics heartbeat reporting. Cache-aware
 routing, disaggregated PD, and mixed-backend clusters are out of scope for this
 demo.

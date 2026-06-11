@@ -239,6 +239,46 @@ def test_etcd_gateway_keepalive_handles_null_ttl(monkeypatch):
     assert EtcdGatewayClient("127.0.0.1:2379").lease_keepalive("lease-1") == 0
 
 
+def test_send_heartbeat_posts_metrics_with_token(monkeypatch):
+    _install_fakes(monkeypatch)
+
+    class _Scraper:
+        def __init__(self, *a, **k):
+            pass
+
+        def scrape(self):
+            return {
+                "load_metrics": {
+                    "waiting_requests_num": 2,
+                    "gpu_cache_usage_perc": 0.4,
+                },
+                "latency_metrics": {"recent_max_ttft": 12, "recent_max_tbt": 3},
+            }
+
+    monkeypatch.setattr(sidecar_mod, "VllmMetricsScraper", _Scraper)
+    sc = sidecar_mod.Sidecar(_args(internal_token="tok"))
+    sc._lease_id = "lease-1"
+    sc._incarnation_id = "vllm-x"
+
+    captured = {}
+
+    def fake_post(url, json, headers, timeout):
+        captured.update(url=url, json=json, headers=headers)
+
+        class _R:
+            status_code = 200
+            text = ""
+
+        return _R()
+
+    monkeypatch.setattr(sc._hb_session, "post", fake_post)
+    sc._send_heartbeat()
+
+    assert captured["url"].endswith("/v1/internal/heartbeat")
+    assert captured["headers"]["X-Internal-Token"] == "tok"
+    assert captured["json"]["load_metrics"]["waiting_requests_num"] == 2
+
+
 def test_sidecar_registration_keepalive_and_deregister(monkeypatch):
     etcd = _install_fakes(monkeypatch)
     sc = sidecar_mod.Sidecar(_args())

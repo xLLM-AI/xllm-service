@@ -26,4 +26,7 @@ service XllmHttpService {
   rpc Embeddings (HttpRequest) returns (HttpResponse) {}
   rpc Models (HttpRequest) returns (HttpResponse) {}
   rpc Metrics (HttpRequest) returns (HttpResponse) {}
+  // Internal: backends (e.g. the vLLM sidecar) POST a heartbeat carrying
+  // LoadMetrics/LatencyMetrics here. Body is JSON of proto HeartbeatRequest.
+  rpc Heartbeat (HttpRequest) returns (HttpResponse) {}
 }
