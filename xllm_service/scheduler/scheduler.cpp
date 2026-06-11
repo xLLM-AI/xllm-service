@@ -35,9 +35,14 @@ constexpr const char* kEtcdPasswordEnvVar = "ETCD_PASSWORD";
 namespace xllm_service {
 
 Scheduler::Scheduler(const Options& options) : options_(options) {
-  tokenizer_ = TokenizerFactory::create_tokenizer(options_.tokenizer_path(),
-                                                  &tokenizer_args_);
-  chat_template_ = std::make_unique<JinjaChatTemplate>(tokenizer_args_);
+  // vLLM-backend clusters forward the raw client JSON to vLLM, which does its
+  // own tokenization / chat templating. Skip building the local tokenizer and
+  // chat template so the master does not require a tokenizer.model / template.
+  if (options_.default_backend_type() != "vllm") {
+    tokenizer_ = TokenizerFactory::create_tokenizer(options_.tokenizer_path(),
+                                                    &tokenizer_args_);
+    chat_template_ = std::make_unique<JinjaChatTemplate>(tokenizer_args_);
+  }
 
   const std::string etcd_username =
       utils::get_optional_string_env(kEtcdUsernameEnvVar).value_or("");
@@ -107,8 +112,14 @@ Scheduler::Scheduler(const Options& options) : options_(options) {
 Scheduler::~Scheduler() { etcd_client_->stop_watch(); }
 
 bool Scheduler::schedule(std::shared_ptr<Request> request) {
+  // For vLLM backend clusters we forward the client's raw OpenAI JSON straight
+  // through to vLLM, which applies its own chat template and tokenization. So
+  // skip the local chat-template + tokenize steps entirely (leaving token_ids
+  // empty) and only run instance selection. See default_backend_type option.
+  const bool is_vllm = (options_.default_backend_type() == "vllm");
+
   // apply chat template
-  if (request->messages.size() > 0) {
+  if (!is_vllm && request->messages.size() > 0) {
     if (chat_template_ == nullptr) {
       LOG(ERROR) << "Chat template has not configured.";
       return false;
@@ -127,7 +138,7 @@ bool Scheduler::schedule(std::shared_ptr<Request> request) {
   }
 
   // encode prompt
-  if (request->prompt.size() != 0) {
+  if (!is_vllm && request->prompt.size() != 0) {
     if (!get_tls_tokenizer()->encode(request->prompt, &request->token_ids)) {
       LOG(ERROR) << "Encode prompt failed: " << request->prompt;
       return false;
@@ -147,7 +158,7 @@ bool Scheduler::schedule(std::shared_ptr<Request> request) {
   DLOG(INFO) << request->routing.debug_string();
 
   // update request metrics
-  if (request->prompt.size() != 0) {
+  if (!is_vllm && request->prompt.size() != 0) {
     instance_mgr_->update_request_metrics(request, RequestAction::SCHEDULE);
   }
 

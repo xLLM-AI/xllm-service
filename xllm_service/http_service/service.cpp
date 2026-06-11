@@ -180,7 +180,7 @@ class CustomProgressiveReader : public brpc::ProgressiveReader {
   // A temporary error may be handled by blocking this function, which
   // may block the HTTP parsing on the socket.
   virtual butil::Status OnReadOnePart(const void* data, size_t length) {
-    call_data_->write(std::string((char*)data, length));
+    call_data_->write(std::string(static_cast<const char*>(data), length));
     return butil::Status::OK();
   }
 
@@ -196,6 +196,75 @@ class CustomProgressiveReader : public brpc::ProgressiveReader {
   brpc::Controller* redirect_cntl_ = nullptr;
   std::shared_ptr<T> call_data_;
 };
+
+// Done callback for a streaming vLLM forward: once the response header has
+// arrived, attach a progressive reader that relays the SSE body straight to
+// the client. The reader takes ownership of redirect_cntl. `channel` is held
+// only to keep the shared_ptr alive until the asynchronous call completes.
+template <typename T>
+void handle_vllm_stream_done(brpc::Controller* redirect_cntl,
+                             std::shared_ptr<T> call_data,
+                             std::shared_ptr<brpc::Channel> channel) {
+  if (redirect_cntl->Failed()) {
+    LOG(ERROR) << "Fail to forward to vLLM (stream): "
+               << redirect_cntl->ErrorText();
+    call_data->finish_with_error(redirect_cntl->ErrorText());
+    delete redirect_cntl;
+    return;
+  }
+  redirect_cntl->ReadProgressiveAttachmentBy(
+      new CustomProgressiveReader<T>(redirect_cntl, call_data));
+}
+
+// Done callback for a non-streaming vLLM forward. Delegates to the shared
+// non-stream handler; `channel` is held only to keep the shared_ptr alive
+// until the asynchronous call completes.
+template <typename T>
+void handle_vllm_non_stream_done(brpc::Controller* redirect_cntl,
+                                 std::shared_ptr<T> call_data,
+                                 std::shared_ptr<brpc::Channel> channel) {
+  handle_non_stream_response(redirect_cntl, call_data);
+}
+
+// Forward an OpenAI HTTP request to a vLLM backend, transparently relaying the
+// raw client body (no proto re-serialization). Reuses
+// handle_non_stream_response (non-stream) and CustomProgressiveReader (stream);
+// the vLLM SSE format passes through unchanged.
+template <typename T>
+void handle_vllm(std::shared_ptr<T> call_data,
+                 Scheduler* scheduler,
+                 const std::string& target_name,
+                 const std::string& path,
+                 bool is_post,
+                 const std::string& body,
+                 bool stream) {
+  auto channel = scheduler->get_channel(target_name);
+  if (channel == nullptr) {
+    LOG(ERROR) << "No channel for vLLM instance: " << target_name;
+    call_data->finish_with_error("vLLM backend instance is not available.");
+    return;
+  }
+
+  brpc::Controller* redirect_cntl = new brpc::Controller();
+  redirect_cntl->http_request().uri() = "http://" + target_name + path;
+  redirect_cntl->http_request().set_method(is_post ? brpc::HTTP_METHOD_POST
+                                                   : brpc::HTTP_METHOD_GET);
+  if (is_post) {
+    redirect_cntl->http_request().SetHeader("Content-Type", "application/json");
+    redirect_cntl->request_attachment().append(body);
+  }
+
+  if (stream) {
+    redirect_cntl->response_will_be_read_progressively();
+    google::protobuf::Closure* done = brpc::NewCallback(
+        &handle_vllm_stream_done<T>, redirect_cntl, call_data, channel);
+    channel->CallMethod(nullptr, redirect_cntl, nullptr, nullptr, done);
+  } else {
+    google::protobuf::Closure* done = brpc::NewCallback(
+        &handle_vllm_non_stream_done<T>, redirect_cntl, call_data, channel);
+    channel->CallMethod(nullptr, redirect_cntl, nullptr, nullptr, done);
+  }
+}
 }  // namespace
 
 namespace {
@@ -349,6 +418,19 @@ void XllmHttpServiceImpl::get_serving_models(
     return;
   }
 
+  // vLLM backend: relay GET /v1/models straight through.
+  if (scheduler_->get_instance_info(service_request->routing.prefill_name)
+          .backend_type == "vllm") {
+    handle_vllm(call_data,
+                scheduler_,
+                service_request->routing.prefill_name,
+                "/v1/models",
+                /*is_post=*/false,
+                /*body=*/"",
+                /*stream=*/false);
+    return;
+  }
+
   brpc::Channel* channel_ptr =
       scheduler_->get_channel(service_request->routing.prefill_name).get();
 
@@ -405,6 +487,21 @@ void XllmHttpServiceImpl::Completions(
   } else {
     cntl->SetFailed("Prompt is empty!");
     LOG(ERROR) << "Prompt is empty!";
+    return;
+  }
+
+  // vLLM backend: relay the raw client JSON over HTTP, skip xllm-only fields.
+  if (scheduler_->get_instance_info(service_request->routing.prefill_name)
+          .backend_type == "vllm") {
+    auto call_data = std::make_shared<CompletionCallData>(
+        cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
+    handle_vllm(call_data,
+                scheduler_,
+                service_request->routing.prefill_name,
+                "/v1/completions",
+                /*is_post=*/true,
+                attachment,
+                service_request->stream);
     return;
   }
 
@@ -490,6 +587,21 @@ void XllmHttpServiceImpl::ChatCompletions(
   } else {
     cntl->SetFailed("Messages is empty!");
     LOG(ERROR) << "Messages is empty!";
+    return;
+  }
+
+  // vLLM backend: relay the raw client JSON over HTTP, skip xllm-only fields.
+  if (scheduler_->get_instance_info(service_request->routing.prefill_name)
+          .backend_type == "vllm") {
+    auto call_data = std::make_shared<ChatCallData>(
+        cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
+    handle_vllm(call_data,
+                scheduler_,
+                service_request->routing.prefill_name,
+                "/v1/chat/completions",
+                /*is_post=*/true,
+                attachment,
+                service_request->stream);
     return;
   }
 

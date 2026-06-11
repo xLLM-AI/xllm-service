@@ -100,6 +100,7 @@ class InstanceMgr final {
 
   // brpc::Channel::Init only; must NOT be called while holding cluster_mutex_.
   bool init_brpc_channel(const std::string& target_uri,
+                         const InstanceMetaInfo& info,
                          std::shared_ptr<brpc::Channel>* out_channel);
   bool probe_instance_health(const std::string& instance_name);
   void reconcile_instance_states();

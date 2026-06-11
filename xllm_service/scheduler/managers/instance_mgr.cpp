@@ -479,18 +479,28 @@ bool InstanceMgr::record_instance_heartbeat(const std::string& instance_name,
 
 bool InstanceMgr::init_brpc_channel(
     const std::string& instance_name,
+    const InstanceMetaInfo& info,
     std::shared_ptr<brpc::Channel>* out_channel) {
   auto channel = std::make_shared<brpc::Channel>();
   brpc::ChannelOptions options;
-  // Add to params
-  // options.protocol = "http";
-  options.timeout_ms = options_.timeout_ms(); /*milliseconds*/
-  options.max_retry = 3;
-  options.connect_timeout_ms = options_.connect_timeout_ms();
+  if (info.backend_type == "vllm") {
+    // Pass the bare host:port to Init: brpc treats any "scheme://" prefix as a
+    // naming service, and "http" is not one, so a "http://" target fails with
+    // "Unknown naming service". options.protocol selects HTTP instead.
+    options.protocol = "http";
+    options.timeout_ms = options_.vllm_http_timeout_ms();
+    options.max_retry = 0;
+    options.connect_timeout_ms = options_.connect_timeout_ms();
+  } else {
+    options.timeout_ms = options_.timeout_ms();
+    options.max_retry = 3;
+    options.connect_timeout_ms = options_.connect_timeout_ms();
+  }
   std::string load_balancer = "";
   if (channel->Init(instance_name.c_str(), load_balancer.c_str(), &options) !=
       0) {
-    LOG(ERROR) << "Fail to initialize channel for " << instance_name;
+    LOG(ERROR) << "Fail to initialize channel for " << instance_name
+               << " (backend=" << info.backend_type << ")";
     return false;
   }
   *out_channel = std::move(channel);
@@ -1164,7 +1174,7 @@ bool InstanceMgr::register_instance(const std::string& name,
   }
 
   std::shared_ptr<brpc::Channel> channel;
-  if (!init_brpc_channel(name, &channel)) {
+  if (!init_brpc_channel(name, info, &channel)) {
     LOG(ERROR) << "create channel fail: " << name;
     return false;
   }
@@ -1286,6 +1296,9 @@ bool InstanceMgr::gather_link_operations(
     const InstanceMetaInfo& info,
     std::vector<std::pair<std::string, InstanceMetaInfo>>* out_ops) {
   out_ops->clear();
+  if (info.backend_type == "vllm") {
+    return true;
+  }
   switch (info.type) {
     case InstanceType::DEFAULT:
       break;
