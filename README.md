@@ -75,7 +75,9 @@ git submodule update
 #### Compilation
 compile xllm-service: 
 ```bash
-sh prepare.sh # apply patch
+# prepare.sh checks libcpprest-dev, installs it only when running as root on Debian/Ubuntu,
+# and then applies the cpprestsdk patch. Otherwise install libcpprest-dev manually first.
+sh prepare.sh
 mkdir -p build && cd build
 cmake .. && make -j 8
 ```

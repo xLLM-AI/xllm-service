@@ -67,7 +67,9 @@ git submodule update
 #### 编译
 编译执行
 ```bash
-sh prepare.sh # 应用patch
+# prepare.sh 会检查 libcpprest-dev；在 Debian/Ubuntu root 环境中缺失时自动安装，
+# 否则请先手动安装 libcpprest-dev，然后脚本会应用 cpprestsdk patch。
+sh prepare.sh
 mkdir -p build && cd build
 cmake .. && make -j 8
 ```
