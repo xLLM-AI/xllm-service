@@ -13,11 +13,13 @@ OpenAI client
 xllm-service master
     │  HTTP forwarding for backend_type=vllm
     ▼
-vLLM backend (:18000)
+vLLM backend (:18000)  ◀── vLLM sidecar registers it in etcd
 ```
 
 vLLM instances are discovered through etcd keys such as
-`XLLM:DEFAULT:127.0.0.1:18000` with `backend_type="vllm"`.
+`XLLM:DEFAULT:127.0.0.1:18000` with `backend_type="vllm"`. The demo uses
+`xllm_service/vllm_sidecar` to create and keep this registration under an etcd
+lease; if the sidecar exits, the lease expires and the instance is removed.
 
 ## Prerequisites
 
@@ -76,6 +78,7 @@ Set `STOP_VLLM=0` to leave an externally managed vLLM process running.
 ## Scope
 
 This demo covers the minimal vLLM backend path: OpenAI-compatible request
-forwarding, model listing, and streaming/non-streaming responses. Cache-aware
+forwarding, model listing, streaming/non-streaming responses, and sidecar-based
+etcd lease registration. Cache-aware
 routing, disaggregated PD, and mixed-backend clusters are out of scope for this
 demo.

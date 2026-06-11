@@ -1,0 +1,3 @@
+# Only stdlib + requests. We use etcd's v3 gRPC-gateway JSON/HTTP API rather
+# than python-etcd3 to avoid brittle grpcio/protobuf native deps.
+requests>=2.20
