@@ -13,3 +13,17 @@ target_link_libraries(call_data_test
                       PRIVATE brpc-static leveldb::leveldb ZLIB::ZLIB
                               protobuf::libprotobuf OpenSSL::SSL
                               OpenSSL::Crypto)
+
+cc_test(
+  NAME
+    types_test
+  SRCS
+    types_test.cpp
+  DEPS
+    :common
+    GTest::gtest_main
+)
+target_link_libraries(types_test
+                      PRIVATE brpc-static leveldb::leveldb ZLIB::ZLIB
+                              protobuf::libprotobuf OpenSSL::SSL
+                              OpenSSL::Crypto)
