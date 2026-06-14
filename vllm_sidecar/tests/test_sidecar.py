@@ -21,10 +21,10 @@ import json
 import pytest
 import requests
 
-from xllm_service.vllm_sidecar import sidecar as sidecar_mod
-from xllm_service.vllm_sidecar.etcd_registry import EtcdError, EtcdGatewayClient
-from xllm_service.vllm_sidecar.health import VllmHealthProbe
-from xllm_service.vllm_sidecar.meta import InstanceType
+from vllm_sidecar import sidecar as sidecar_mod
+from vllm_sidecar.etcd_registry import EtcdError, EtcdGatewayClient
+from vllm_sidecar.health import VllmHealthProbe
+from vllm_sidecar.meta import InstanceType
 
 
 class _Response:

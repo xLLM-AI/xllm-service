@@ -18,7 +18,7 @@ vLLM backend (:18000)  ◀── vLLM sidecar registers it in etcd
 
 vLLM instances are discovered through etcd keys such as
 `XLLM:DEFAULT:127.0.0.1:18000` with `backend_type="vllm"`. The demo uses
-`xllm_service/vllm_sidecar` to create and keep this registration under an etcd
+`vllm_sidecar` to create and keep this registration under an etcd
 lease; if the sidecar exits, the lease expires and the instance is removed.
 
 ## Prerequisites

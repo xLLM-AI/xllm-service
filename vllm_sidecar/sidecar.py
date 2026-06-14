@@ -16,7 +16,7 @@
 
 Run alongside a vLLM server:
 
-    python -m xllm_service.vllm_sidecar.sidecar \
+    python -m vllm_sidecar.sidecar \
         --etcd-endpoints 127.0.0.1:2379 \
         --vllm-url http://127.0.0.1:18000 \
         --register-addr 127.0.0.1:18000

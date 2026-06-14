@@ -22,7 +22,7 @@ Guards against drift from the C++ source of truth:
 
 import pytest
 
-from xllm_service.vllm_sidecar.meta import (
+from vllm_sidecar.meta import (
     InstanceType,
     build_instance_key,
     build_instance_meta,

@@ -53,13 +53,13 @@ long-running process that keeps registration in lockstep with vLLM's health.
 ## Install
 
 ```bash
-pip install -r xllm_service/vllm_sidecar/requirements.txt   # only `requests`
+pip install -r vllm_sidecar/requirements.txt   # only `requests`
 ```
 
 ## Run
 
 ```bash
-python -m xllm_service.vllm_sidecar.sidecar \
+python -m vllm_sidecar.sidecar \
     --etcd-endpoints 127.0.0.1:2379 \
     --vllm-url       http://127.0.0.1:18000 \
     --register-addr  127.0.0.1:18000          # host:port, NO scheme
