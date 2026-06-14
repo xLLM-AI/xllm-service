@@ -54,6 +54,7 @@ cc_library(
     scheduler.cpp
   DEPS
     :anthropic_adapter
+    :anthropic_stream_encoder
     :chat_template
     :common
     :etcd_client

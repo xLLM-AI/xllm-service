@@ -51,6 +51,12 @@ struct Message {
     std::string type;
 
     std::string text;
+    std::string thinking;
+    std::string signature;
+    std::string data;
+    std::string id;
+    std::string name;
+    nlohmann::ordered_json input = nlohmann::ordered_json::object();
     MMUrl image_url;  // image place holder
 
     MMUrl video_url;  // video place holder
@@ -70,6 +76,7 @@ struct Message {
 
   std::string role;
   Content content;
+  std::optional<std::string> reasoning_content;
   std::optional<ToolCallVec> tool_calls;
   std::string tool_call_id;
 };

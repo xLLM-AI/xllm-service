@@ -113,6 +113,12 @@ class StreamCallData : public CallData {
 
   bool proceed(bool rpc_ok) override { return true; }
 
+  void trace(const std::string& message) {
+    if (trace_callback_) {
+      trace_callback_(message);
+    }
+  }
+
   // For non stream response
   bool write_and_finish(const std::string& attachment /*json string*/) {
     if (trace_callback_) trace_callback_(attachment);

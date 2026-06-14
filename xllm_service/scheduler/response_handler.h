@@ -32,7 +32,7 @@ class StreamOutputParser;
 
 namespace xllm_service {
 
-struct AnthropicStreamState;
+class AnthropicStreamEncoder;
 
 struct ChatStreamParseState {
   std::unordered_set<size_t> first_message_sent;
@@ -81,7 +81,7 @@ class ResponseHandler final {
       std::shared_ptr<AnthropicCallData> call_data,
       const std::string& model,
       const llm::RequestOutput& output,
-      AnthropicStreamState& stream_state,
+      AnthropicStreamEncoder& encoder,
       std::shared_ptr<xllm::StreamOutputParser> stream_parser = nullptr);
   bool send_result_to_client(std::shared_ptr<AnthropicCallData> call_data,
                              const std::string& model,

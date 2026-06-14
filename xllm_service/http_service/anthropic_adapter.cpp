@@ -20,12 +20,15 @@ limitations under the License.
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 #include "api_service/anthropic_json.h"
 #include "api_service/anthropic_stream_utils.h"
 #include "api_service/chat_json_parser.h"
+#include "chat_template/message_projection.h"
 #include "common/xllm/uuid.h"
 
 namespace xllm_service {
@@ -38,6 +41,10 @@ AnthropicAdaptResult ok_result() { return AnthropicAdaptResult{}; }
 AnthropicAdaptResult error_result(std::string error) {
   return AnthropicAdaptResult{false, std::move(error)};
 }
+
+// Synthetic Anthropic-shaped compatibility value, not a Claude verification
+// signature.
+std::string new_thinking_sig() { return short_uuid.random(); }
 
 std::string system_text(const xllm::proto::AnthropicContentBlockList& blocks) {
   std::string text;
@@ -102,7 +109,6 @@ AnthropicAdaptResult tool_result_text(
 
 AnthropicAdaptResult add_tool_use(
     const xllm::proto::AnthropicContentBlock& block,
-    google::protobuf::RepeatedPtrField<xllm::proto::ToolCall>* proto_tool_calls,
     Message::ToolCallVec* tool_calls) {
   if (!block.has_id()) {
     return error_result("Anthropic tool_use id is required.");
@@ -110,14 +116,6 @@ AnthropicAdaptResult add_tool_use(
   if (!block.has_name()) {
     return error_result("Anthropic tool_use name is required.");
   }
-
-  auto* proto_call = proto_tool_calls->Add();
-  proto_call->set_id(block.id());
-  proto_call->set_type("function");
-  auto* proto_function = proto_call->mutable_function();
-  proto_function->set_name(block.name());
-  proto_function->set_arguments(block.has_input() ? struct_json(block.input())
-                                                  : "{}");
 
   Message::ToolCall tool_call;
   tool_call.id = block.id();
@@ -129,14 +127,63 @@ AnthropicAdaptResult add_tool_use(
   return ok_result();
 }
 
+bool is_empty_bash_tool_use(const xllm::proto::AnthropicContentBlock& block) {
+  return block.has_name() && block.name() == "Bash" &&
+         (!block.has_input() || block.input().fields().empty());
+}
+
+nlohmann::ordered_json struct_to_json(
+    const google::protobuf::Struct& proto_struct) {
+  return nlohmann::ordered_json::parse(struct_json(proto_struct));
+}
+
+Message::MMContent thinking_content(
+    const xllm::proto::AnthropicContentBlock& block) {
+  Message::MMContent content("thinking");
+  if (block.has_thinking()) {
+    content.thinking = block.thinking();
+  }
+  if (block.has_signature()) {
+    content.signature = block.signature();
+  }
+  return content;
+}
+
+Message::MMContent redacted_content(
+    const xllm::proto::AnthropicContentBlock& block) {
+  Message::MMContent content("redacted_thinking");
+  if (block.has_data()) {
+    content.data = block.data();
+  }
+  return content;
+}
+
+Message::MMContent tool_use_content(
+    const xllm::proto::AnthropicContentBlock& block) {
+  Message::MMContent content("tool_use");
+  if (block.has_id()) {
+    content.id = block.id();
+  }
+  if (block.has_name()) {
+    content.name = block.name();
+  }
+  if (block.has_input()) {
+    content.input = struct_to_json(block.input());
+  }
+  return content;
+}
+
 AnthropicAdaptResult add_tool_result(
     const xllm::proto::AnthropicContentBlock& block,
     const std::string& role,
-    xllm::proto::ChatRequest* chat_request,
+    const std::unordered_set<std::string>& skipped_tool_use_ids,
     ChatMessages* messages,
     Message::MMContentVec* content_parts) {
   if (!block.has_id()) {
     return error_result("Anthropic tool_result tool_use_id is required.");
+  }
+  if (skipped_tool_use_ids.find(block.id()) != skipped_tool_use_ids.end()) {
+    return ok_result();
   }
 
   std::string result_text;
@@ -146,11 +193,6 @@ AnthropicAdaptResult add_tool_result(
   }
 
   if (role == "user") {
-    auto* tool_msg = chat_request->add_messages();
-    tool_msg->set_role("tool");
-    tool_msg->set_content(result_text);
-    tool_msg->set_tool_call_id(block.id());
-
     Message message("tool", result_text);
     message.tool_call_id = block.id();
     messages->emplace_back(std::move(message));
@@ -206,12 +248,8 @@ std::string tool_choice(const xllm::proto::AnthropicMessagesRequest& request) {
 
 AnthropicAdaptResult add_system_msg(
     const xllm::proto::AnthropicMessagesRequest& request,
-    xllm::proto::ChatRequest* chat_request,
     ChatMessages* messages) {
   if (request.has_system_string()) {
-    auto* message = chat_request->add_messages();
-    message->set_role("system");
-    message->set_content(request.system_string());
     messages->emplace_back("system", request.system_string());
     return ok_result();
   }
@@ -228,76 +266,74 @@ AnthropicAdaptResult add_system_msg(
   if (text.empty()) {
     return ok_result();
   }
-  auto* message = chat_request->add_messages();
-  message->set_role("system");
-  message->set_content(text);
   messages->emplace_back("system", std::move(text));
   return ok_result();
 }
 
 AnthropicAdaptResult add_content_msg(
     const xllm::proto::AnthropicMessage& src_message,
-    xllm::proto::ChatRequest* chat_request,
-    ChatMessages* messages) {
+    ChatMessages* messages,
+    std::unordered_set<std::string>* skipped_tool_use_ids) {
   switch (src_message.message_content_case()) {
     case xllm::proto::AnthropicMessage::kContentString: {
-      auto* message = chat_request->add_messages();
-      message->set_role(src_message.role());
-      message->set_content(src_message.content_string());
       messages->emplace_back(src_message.role(), src_message.content_string());
       return ok_result();
     }
     case xllm::proto::AnthropicMessage::kContentBlocks: {
-      Message::MMContentVec mm_content;
+      Message::MMContentVec ordered_content;
       Message::ToolCallVec tool_calls;
-      google::protobuf::RepeatedPtrField<xllm::proto::ToolCall>
-          proto_tool_calls;
+      std::string reasoning_content;
       for (const auto& block : src_message.content_blocks().blocks()) {
         if (block.type() == "text" && block.has_text()) {
-          mm_content.emplace_back("text", block.text());
+          ordered_content.emplace_back("text", block.text());
         } else if (block.type() == "tool_use") {
-          auto result = add_tool_use(block, &proto_tool_calls, &tool_calls);
+          if (is_empty_bash_tool_use(block)) {
+            if (block.has_id()) {
+              skipped_tool_use_ids->insert(block.id());
+            }
+            continue;
+          }
+          auto result = add_tool_use(block, &tool_calls);
           if (!result.ok) {
             return result;
           }
+          ordered_content.emplace_back(tool_use_content(block));
         } else if (block.type() == "tool_result") {
-          auto result = add_tool_result(
-              block, src_message.role(), chat_request, messages, &mm_content);
+          auto result = add_tool_result(block,
+                                        src_message.role(),
+                                        *skipped_tool_use_ids,
+                                        messages,
+                                        &ordered_content);
           if (!result.ok) {
             return result;
           }
+        } else if (block.type() == "thinking") {
+          ordered_content.emplace_back(thinking_content(block));
+          if (block.has_thinking()) {
+            reasoning_content += block.thinking();
+          }
+        } else if (block.type() == "redacted_thinking") {
+          ordered_content.emplace_back(redacted_content(block));
         } else {
           return error_result("Unsupported Anthropic content block type: " +
                               block.type());
         }
       }
 
-      std::string flat_text;
-      bool first = true;
-      for (const auto& block : mm_content) {
-        if (!first) {
-          flat_text += '\n';
-        }
-        flat_text += block.text;
-        first = false;
-      }
-      if (flat_text.empty() && proto_tool_calls.empty()) {
+      const std::string text = flat_text(ordered_content);
+      if (ordered_content.empty() && tool_calls.empty()) {
         return ok_result();
       }
 
-      auto* message = chat_request->add_messages();
-      message->set_role(src_message.role());
-      message->set_content(flat_text);
-      for (const auto& tool_call : proto_tool_calls) {
-        message->add_tool_calls()->CopyFrom(tool_call);
+      Message dst_message(src_message.role(), text);
+      if (!reasoning_content.empty()) {
+        dst_message.reasoning_content = reasoning_content;
       }
-
-      Message dst_message(src_message.role(), flat_text);
       if (!tool_calls.empty()) {
         dst_message.tool_calls = std::move(tool_calls);
       }
-      if (mm_content.size() > 1) {
-        dst_message.content = std::move(mm_content);
+      if (needs_content_vec(ordered_content)) {
+        dst_message.content = std::move(ordered_content);
       }
       messages->emplace_back(std::move(dst_message));
       return ok_result();
@@ -346,128 +382,43 @@ void fill_usage(const llm::RequestOutput& request_output,
       static_cast<int32_t>(usage.num_generated_tokens));
 }
 
-void add_message_start(const std::string& model,
-                       const llm::RequestOutput& request_output,
-                       AnthropicStreamState* state,
-                       std::vector<xllm::proto::AnthropicStreamEvent>* events) {
-  if (state->message_started) {
-    return;
+bool normalize_stream_event_json(const xllm::proto::AnthropicStreamEvent& event,
+                                 std::string* json,
+                                 std::string* error) {
+  try {
+    nlohmann::json parsed = nlohmann::json::parse(*json);
+
+    if (event.type() == "message_start" && event.has_message()) {
+      auto& message = parsed["message"];
+      if (!event.message().has_stop_reason()) {
+        message["stop_reason"] = nullptr;
+      }
+      if (!event.message().has_stop_sequence()) {
+        message["stop_sequence"] = nullptr;
+      }
+      auto& usage = message["usage"];
+      usage["input_tokens"] = event.message().usage().input_tokens();
+      usage["output_tokens"] = event.message().usage().output_tokens();
+    }
+
+    if (event.type() == "message_delta" && event.has_delta()) {
+      auto& delta = parsed["delta"];
+      if (!event.delta().has_stop_sequence()) {
+        delta["stop_sequence"] = nullptr;
+      }
+      if (event.has_usage()) {
+        auto& usage = parsed["usage"];
+        usage["input_tokens"] = event.usage().input_tokens();
+        usage["output_tokens"] = event.usage().output_tokens();
+      }
+    }
+
+    *json = parsed.dump();
+    return true;
+  } catch (const std::exception& e) {
+    *error = e.what();
+    return false;
   }
-
-  xllm::proto::AnthropicStreamEvent event;
-  event.set_type("message_start");
-  auto* message = event.mutable_message();
-  message->set_id(request_output.request_id);
-  message->set_type("message");
-  message->set_role("assistant");
-  message->set_model(model);
-  auto* usage = message->mutable_usage();
-  usage->set_input_tokens(0);
-  usage->set_output_tokens(0);
-
-  events->push_back(std::move(event));
-  state->message_started = true;
-}
-
-void add_block_stop(AnthropicStreamState* state,
-                    std::vector<xllm::proto::AnthropicStreamEvent>* events) {
-  if (state->content_block_index < 0) {
-    return;
-  }
-
-  xllm::proto::AnthropicStreamEvent event;
-  event.set_type("content_block_stop");
-  event.set_index(state->content_block_index);
-  events->push_back(std::move(event));
-}
-
-void start_text_block(AnthropicStreamState* state,
-                      std::vector<xllm::proto::AnthropicStreamEvent>* events) {
-  if (state->last_content_block_type == "text") {
-    return;
-  }
-  if (!state->last_content_block_type.empty()) {
-    add_block_stop(state, events);
-  }
-
-  state->last_content_block_type = "text";
-  ++state->content_block_index;
-
-  xllm::proto::AnthropicStreamEvent event;
-  event.set_type("content_block_start");
-  event.set_index(state->content_block_index);
-  auto* content_block = event.mutable_content_block();
-  content_block->set_type("text");
-  content_block->set_text("");
-  events->push_back(std::move(event));
-}
-
-void start_tool_block(const std::string& tool_call_id,
-                      const std::string& function_name,
-                      AnthropicStreamState* state,
-                      std::vector<xllm::proto::AnthropicStreamEvent>* events) {
-  if (!state->last_content_block_type.empty()) {
-    add_block_stop(state, events);
-  }
-
-  state->last_content_block_type = "tool_use";
-  ++state->content_block_index;
-
-  xllm::proto::AnthropicStreamEvent event;
-  event.set_type("content_block_start");
-  event.set_index(state->content_block_index);
-  auto* content_block = event.mutable_content_block();
-  content_block->set_type("tool_use");
-  if (!tool_call_id.empty()) {
-    content_block->set_id(tool_call_id);
-  }
-  if (!function_name.empty()) {
-    content_block->set_name(function_name);
-  }
-  content_block->mutable_input();
-  events->push_back(std::move(event));
-}
-
-void add_text_delta(const std::string& text,
-                    const AnthropicStreamState& state,
-                    std::vector<xllm::proto::AnthropicStreamEvent>* events) {
-  xllm::proto::AnthropicStreamEvent event;
-  event.set_type("content_block_delta");
-  event.set_index(state.content_block_index);
-  auto* delta = event.mutable_delta();
-  delta->set_type("text_delta");
-  delta->set_text(text);
-  events->push_back(std::move(event));
-}
-
-void add_message_delta(const llm::RequestOutput& request_output,
-                       const std::string& finish_reason,
-                       bool has_tool_call,
-                       std::vector<xllm::proto::AnthropicStreamEvent>* events) {
-  xllm::proto::AnthropicStreamEvent event;
-  event.set_type("message_delta");
-  auto* delta = event.mutable_delta();
-  delta->set_stop_reason(xllm::api_service::get_stream_stop_reason(
-      true, has_tool_call, finish_reason));
-
-  auto* usage = event.mutable_usage();
-  if (request_output.usage.has_value()) {
-    const auto& source_usage = request_output.usage.value();
-    usage->set_input_tokens(
-        static_cast<int32_t>(source_usage.num_prompt_tokens));
-    usage->set_output_tokens(
-        static_cast<int32_t>(source_usage.num_generated_tokens));
-  } else {
-    usage->set_input_tokens(0);
-    usage->set_output_tokens(0);
-  }
-  events->push_back(std::move(event));
-}
-
-void add_message_stop(std::vector<xllm::proto::AnthropicStreamEvent>* events) {
-  xllm::proto::AnthropicStreamEvent event;
-  event.set_type("message_stop");
-  events->push_back(std::move(event));
 }
 
 }  // namespace
@@ -517,19 +468,24 @@ AnthropicAdaptResult fill_chat_req(
   }
   chat_request->set_tool_choice(tool_choice(anthropic_request));
 
-  auto system_result =
-      add_system_msg(anthropic_request, chat_request, messages);
+  auto system_result = add_system_msg(anthropic_request, messages);
   if (!system_result.ok) {
     return system_result;
   }
+  std::unordered_set<std::string> skipped_tool_use_ids;
   for (const auto& message : anthropic_request.messages()) {
-    auto content_result = add_content_msg(message, chat_request, messages);
+    auto content_result =
+        add_content_msg(message, messages, &skipped_tool_use_ids);
     if (!content_result.ok) {
       return content_result;
     }
   }
   if (messages->empty()) {
     return error_result("Messages is empty!");
+  }
+
+  for (const auto& message : *messages) {
+    to_proto(message, chat_request->add_messages());
   }
   return ok_result();
 }
@@ -583,90 +539,6 @@ AnthropicAdaptResult fill_anthropic_resp(
   return ok_result();
 }
 
-AnthropicAdaptResult fill_anthropic_stream_events(
-    const std::string& model,
-    const llm::RequestOutput& request_output,
-    AnthropicStreamState& state,
-    std::vector<xllm::proto::AnthropicStreamEvent>& events) {
-  for (const auto& seq_output : request_output.outputs) {
-    if (!seq_output.text.empty()) {
-      auto result = add_anthropic_text_delta(
-          model, request_output, seq_output.text, state, events);
-      if (!result.ok) {
-        return result;
-      }
-    }
-  }
-
-  if (request_output.finished) {
-    return finish_anthropic_stream(model, request_output, state, events);
-  }
-
-  return ok_result();
-}
-
-AnthropicAdaptResult add_anthropic_text_delta(
-    const std::string& model,
-    const llm::RequestOutput& request_output,
-    const std::string& text,
-    AnthropicStreamState& state,
-    std::vector<xllm::proto::AnthropicStreamEvent>& events) {
-  if (text.empty()) {
-    return ok_result();
-  }
-
-  add_message_start(model, request_output, &state, &events);
-  start_text_block(&state, &events);
-  add_text_delta(text, state, &events);
-  return ok_result();
-}
-
-AnthropicAdaptResult add_anthropic_tool_delta(
-    const std::string& model,
-    const llm::RequestOutput& request_output,
-    const std::string& tool_call_id,
-    const std::string& function_name,
-    const std::string& arguments,
-    AnthropicStreamState& state,
-    std::vector<xllm::proto::AnthropicStreamEvent>& events) {
-  add_message_start(model, request_output, &state, &events);
-  state.has_tool_call = true;
-  const bool starts_new_call = !function_name.empty();
-  if (state.last_content_block_type != "tool_use" || starts_new_call) {
-    start_tool_block(tool_call_id, function_name, &state, &events);
-  }
-
-  auto event = xllm::api_service::make_input_json_delta_event(
-      state.content_block_index, arguments);
-  if (event.has_value()) {
-    events.push_back(std::move(event.value()));
-  }
-  return ok_result();
-}
-
-AnthropicAdaptResult finish_anthropic_stream(
-    const std::string& model,
-    const llm::RequestOutput& request_output,
-    AnthropicStreamState& state,
-    std::vector<xllm::proto::AnthropicStreamEvent>& events) {
-  add_message_start(model, request_output, &state, &events);
-  if (state.content_block_index >= 0) {
-    add_block_stop(&state, &events);
-    state.last_content_block_type.clear();
-  }
-
-  std::string finish_reason;
-  for (const auto& seq_output : request_output.outputs) {
-    if (seq_output.finish_reason.has_value()) {
-      finish_reason = seq_output.finish_reason.value();
-    }
-  }
-  add_message_delta(
-      request_output, finish_reason, state.has_tool_call, &events);
-  add_message_stop(&events);
-  return ok_result();
-}
-
 bool anthropic_json(const xllm::proto::AnthropicMessagesResponse& response,
                     std::string* json,
                     std::string* error) {
@@ -675,6 +547,35 @@ bool anthropic_json(const xllm::proto::AnthropicMessagesResponse& response,
   options.jsonify_empty_array = true;
   return xllm::api_service::proto_to_anthropic_json(
       response, options, json, error);
+}
+
+bool anthropic_json(const xllm::proto::AnthropicMessagesResponse& response,
+                    const std::optional<std::string>& thinking,
+                    std::string* json,
+                    std::string* error) {
+  if (!anthropic_json(response, json, error)) {
+    return false;
+  }
+  if (!thinking.has_value() || thinking->empty()) {
+    return true;
+  }
+
+  try {
+    nlohmann::json parsed = nlohmann::json::parse(*json);
+    if (!parsed.contains("content") || !parsed["content"].is_array()) {
+      parsed["content"] = nlohmann::json::array();
+    }
+    nlohmann::json thinking_block = {{"type", "thinking"},
+                                     {"thinking", thinking.value()},
+                                     {"signature", new_thinking_sig()}};
+    parsed["content"].insert(parsed["content"].begin(),
+                             std::move(thinking_block));
+    *json = parsed.dump();
+    return true;
+  } catch (const std::exception& e) {
+    *error = e.what();
+    return false;
+  }
 }
 
 bool anthropic_event_sse(const xllm::proto::AnthropicStreamEvent& event,
@@ -687,6 +588,9 @@ bool anthropic_event_sse(const xllm::proto::AnthropicStreamEvent& event,
   std::string json;
   if (!xllm::api_service::proto_to_anthropic_json(
           event, options, &json, error)) {
+    return false;
+  }
+  if (!normalize_stream_event_json(event, &json, error)) {
     return false;
   }
   *sse = "event: " + event.type() + "\ndata: " + json + "\n\n";

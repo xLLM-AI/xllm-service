@@ -28,6 +28,7 @@ limitations under the License.
 #include <nlohmann/json.hpp>
 
 #include "chat.pb.h"
+#include "common/anthropic_tracer.h"
 #include "common/call_data.h"
 #include "common/closure_guard.h"
 #include "common/utils.h"
@@ -50,6 +51,29 @@ std::string generate_service_request_id(const std::string& method) {
   ss << "-";
   ss << short_uuid.random();
   return ss.str();
+}
+
+std::string proto_json(const google::protobuf::Message& message) {
+  std::string json;
+  google::protobuf::util::JsonPrintOptions options;
+  options.add_whitespace = false;
+  options.always_print_primitive_fields = true;
+  auto status =
+      google::protobuf::util::MessageToJsonString(message, &json, options);
+  if (!status.ok()) {
+    return message.DebugString();
+  }
+  return json;
+}
+
+AnthropicTracer make_anthropic_tracer(const std::shared_ptr<Request>& request) {
+  AnthropicTracer::Sink sink;
+  std::string service_request_id;
+  if (request) {
+    sink = request->trace_callback;
+    service_request_id = request->service_request_id;
+  }
+  return AnthropicTracer(std::move(sink), /*request_id=*/"", service_request_id);
 }
 
 nlohmann::json proto_value_to_json(const google::protobuf::Value& pb_value);
@@ -647,8 +671,7 @@ void XllmHttpServiceImpl::AnthropicMessages(
   std::string attachment;
   cntl->request_attachment().copy_to(&attachment, content_len, 0);
 
-  auto parse_result =
-      parse_anthropic_json(std::move(attachment), anthropic_req_pb);
+  auto parse_result = parse_anthropic_json(attachment, anthropic_req_pb);
   if (!parse_result.ok) {
     cntl->SetFailed(parse_result.error);
     LOG(ERROR) << "parse anthropic json failed: " << parse_result.error;
@@ -665,6 +688,10 @@ void XllmHttpServiceImpl::AnthropicMessages(
   req_pb->set_request_id(new_anthropic_id());
 
   auto service_request = generate_request(req_pb, "/v1/messages");
+  auto tracer = make_anthropic_tracer(service_request);
+  tracer.trace("raw_http_request", attachment);
+  tracer.trace("anthropic_request_pb", proto_json(*anthropic_req_pb));
+  tracer.trace("chat_request_after_adapt", proto_json(*req_pb));
   service_request->messages = std::move(messages);
   service_request->tools = parse_tools_from_proto(req_pb->tools());
   if (req_pb->has_tool_choice()) {
@@ -686,8 +713,12 @@ void XllmHttpServiceImpl::AnthropicMessages(
   req_pb->mutable_routing()->set_decode_name(
       service_request->routing.decode_name);
 
-  auto call_data = std::make_shared<AnthropicCallData>(
-      cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
+  auto call_data = std::make_shared<AnthropicCallData>(cntl,
+                                                       service_request->stream,
+                                                       done_guard.release(),
+                                                       req_pb,
+                                                       resp_pb,
+                                                       service_request->trace_callback);
   if (!call_data->x_request_id.empty()) {
     req_pb->set_x_request_id(call_data->x_request_id);
   }

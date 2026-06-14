@@ -16,6 +16,7 @@ limitations under the License.
 #include "scheduler/xllm_chat_parse_bridge.h"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_replace.h>
 #include <glog/logging.h>
 
 #include <exception>
@@ -117,6 +118,10 @@ std::string resolve_reasoning_parser(
   return xllm::ReasoningParser::get_parser_auto(reasoning_parser_preference,
                                                 model_type);
 }
+
+std::string strip_think_end(std::string text) {
+  return absl::StrReplaceAll(text, {{"</think>", ""}});
+}
 }  // namespace
 
 bool get_enable_thinking_from_request(
@@ -157,6 +162,50 @@ ChatParseResult parse_chat_output_with_xllm(
 
   const std::string reasoning_parser_format =
       resolve_reasoning_parser(reasoning_parser_preference, model);
+  const std::string parser_format =
+      resolve_tool_call_parser(parser_preference, model);
+
+  if (!tools.empty() && !parser_format.empty() && !result.text.empty()) {
+    auto xllm_tools = to_xllm_tools(tools);
+    xllm::function_call::FunctionCallParser parser(xllm_tools, parser_format);
+
+    if (parser.has_tool_call(result.text)) {
+      if (result.finish_reason == "stop") {
+        result.finish_reason = "tool_calls";
+      }
+
+      try {
+        auto [parsed_text, call_info_list] =
+            parser.parse_non_stream(result.text);
+        result.text = strip_think_end(std::move(parsed_text));
+
+        google::protobuf::RepeatedPtrField<::xllm::proto::ToolCall> tool_calls;
+        for (const auto& call_info : call_info_list) {
+          ::xllm::proto::ToolCall* tool_call =
+              arena ? google::protobuf::Arena::CreateMessage<
+                          ::xllm::proto::ToolCall>(arena)
+                    : new ::xllm::proto::ToolCall();
+
+          tool_call->set_id(
+              xllm::function_call::utils::generate_tool_call_id());
+          tool_call->set_type("function");
+
+          auto* function = tool_call->mutable_function();
+          if (call_info.name.has_value()) {
+            function->set_name(*call_info.name);
+          }
+          function->set_arguments(call_info.parameters);
+
+          tool_calls.AddAllocated(tool_call);
+        }
+
+        result.tool_calls = std::move(tool_calls);
+      } catch (const std::exception& e) {
+        LOG(ERROR) << "Tool call parsing error: " << e.what();
+      }
+    }
+  }
+
   if (!reasoning_parser_format.empty() && !result.text.empty()) {
     try {
       xllm::ReasoningParser reasoning_parser(reasoning_parser_format,
@@ -174,52 +223,6 @@ ChatParseResult parse_chat_output_with_xllm(
     } catch (const std::exception& e) {
       LOG(ERROR) << "Reasoning parsing error: " << e.what();
     }
-  }
-
-  const std::string parser_format =
-      resolve_tool_call_parser(parser_preference, model);
-  if (tools.empty() || parser_format.empty()) {
-    return result;
-  }
-
-  auto xllm_tools = to_xllm_tools(tools);
-  xllm::function_call::FunctionCallParser parser(xllm_tools, parser_format);
-
-  if (!parser.has_tool_call(result.text)) {
-    return result;
-  }
-
-  if (result.finish_reason == "stop") {
-    result.finish_reason = "tool_calls";
-  }
-
-  try {
-    auto [parsed_text, call_info_list] = parser.parse_non_stream(result.text);
-    result.text = std::move(parsed_text);
-
-    google::protobuf::RepeatedPtrField<::xllm::proto::ToolCall> tool_calls;
-    for (const auto& call_info : call_info_list) {
-      ::xllm::proto::ToolCall* tool_call =
-          arena
-              ? google::protobuf::Arena::CreateMessage<::xllm::proto::ToolCall>(
-                    arena)
-              : new ::xllm::proto::ToolCall();
-
-      tool_call->set_id(xllm::function_call::utils::generate_tool_call_id());
-      tool_call->set_type("function");
-
-      auto* function = tool_call->mutable_function();
-      if (call_info.name.has_value()) {
-        function->set_name(*call_info.name);
-      }
-      function->set_arguments(call_info.parameters);
-
-      tool_calls.AddAllocated(tool_call);
-    }
-
-    result.tool_calls = std::move(tool_calls);
-  } catch (const std::exception& e) {
-    LOG(ERROR) << "Tool call parsing error: " << e.what();
   }
 
   return result;

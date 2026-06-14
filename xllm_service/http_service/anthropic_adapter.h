@@ -16,6 +16,7 @@ limitations under the License.
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,13 +30,6 @@ namespace xllm_service {
 struct AnthropicAdaptResult {
   bool ok = true;
   std::string error;
-};
-
-struct AnthropicStreamState {
-  bool message_started = false;
-  bool has_tool_call = false;
-  int32_t content_block_index = -1;
-  std::string last_content_block_type;
 };
 
 std::string new_anthropic_id();
@@ -56,35 +50,12 @@ AnthropicAdaptResult fill_anthropic_resp(
     const google::protobuf::RepeatedPtrField<xllm::proto::ToolCall>*
         tool_calls = nullptr);
 
-AnthropicAdaptResult fill_anthropic_stream_events(
-    const std::string& model,
-    const llm::RequestOutput& request_output,
-    AnthropicStreamState& state,
-    std::vector<xllm::proto::AnthropicStreamEvent>& events);
-
-AnthropicAdaptResult add_anthropic_text_delta(
-    const std::string& model,
-    const llm::RequestOutput& request_output,
-    const std::string& text,
-    AnthropicStreamState& state,
-    std::vector<xllm::proto::AnthropicStreamEvent>& events);
-
-AnthropicAdaptResult add_anthropic_tool_delta(
-    const std::string& model,
-    const llm::RequestOutput& request_output,
-    const std::string& tool_call_id,
-    const std::string& function_name,
-    const std::string& arguments,
-    AnthropicStreamState& state,
-    std::vector<xllm::proto::AnthropicStreamEvent>& events);
-
-AnthropicAdaptResult finish_anthropic_stream(
-    const std::string& model,
-    const llm::RequestOutput& request_output,
-    AnthropicStreamState& state,
-    std::vector<xllm::proto::AnthropicStreamEvent>& events);
+bool anthropic_json(const xllm::proto::AnthropicMessagesResponse& response,
+                    std::string* json,
+                    std::string* error);
 
 bool anthropic_json(const xllm::proto::AnthropicMessagesResponse& response,
+                    const std::optional<std::string>& thinking,
                     std::string* json,
                     std::string* error);
 

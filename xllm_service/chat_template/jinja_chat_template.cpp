@@ -20,8 +20,115 @@ limitations under the License.
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace xllm_service {
+namespace {
+
+bool get_str_field(const nlohmann::ordered_json& json,
+                   const char* key,
+                   std::string* value) {
+  if (!json.contains(key) || !json[key].is_string()) {
+    return false;
+  }
+  *value = json[key].get<std::string>();
+  return true;
+}
+
+std::vector<std::string> thinking_texts(
+    const nlohmann::ordered_json& messages) {
+  std::vector<std::string> texts;
+  for (const auto& message : messages) {
+    if (!message.contains("content") || !message["content"].is_array()) {
+      continue;
+    }
+    for (const auto& item : message["content"]) {
+      std::string type;
+      std::string thinking;
+      if (get_str_field(item, "type", &type) && type == "thinking" &&
+          get_str_field(item, "thinking", &thinking) && !thinking.empty()) {
+        texts.emplace_back(std::move(thinking));
+      }
+    }
+  }
+  return texts;
+}
+
+bool has_all_thinking(const std::string& prompt,
+                      const nlohmann::ordered_json& messages) {
+  for (const auto& thinking : thinking_texts(messages)) {
+    if (prompt.find(thinking) == std::string::npos) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string join_parts(const std::vector<std::string>& parts) {
+  std::string text;
+  for (const auto& part : parts) {
+    if (part.empty()) {
+      continue;
+    }
+    if (!text.empty()) {
+      text += '\n';
+    }
+    text += part;
+  }
+  return text;
+}
+
+std::string prompt_content(const nlohmann::ordered_json& content) {
+  std::vector<std::string> parts;
+  for (const auto& item : content) {
+    std::string type;
+    if (!get_str_field(item, "type", &type)) {
+      continue;
+    }
+    if (type == "thinking") {
+      std::string thinking;
+      if (get_str_field(item, "thinking", &thinking) && !thinking.empty()) {
+        parts.emplace_back("<think>" + thinking + "</think>");
+      }
+    } else if (type == "text") {
+      std::string text;
+      if (get_str_field(item, "text", &text) && !text.empty()) {
+        parts.emplace_back(std::move(text));
+      }
+    }
+  }
+  return join_parts(parts);
+}
+
+bool has_thinking_block(const nlohmann::ordered_json& content) {
+  for (const auto& item : content) {
+    std::string type;
+    if (get_str_field(item, "type", &type) && type == "thinking") {
+      return true;
+    }
+  }
+  return false;
+}
+
+nlohmann::ordered_json with_thinking_fallback(
+    const nlohmann::ordered_json& messages) {
+  auto fallback = messages;
+  for (auto& message : fallback) {
+    if (!message.contains("content") || !message["content"].is_array()) {
+      continue;
+    }
+    if (!has_thinking_block(message["content"])) {
+      continue;
+    }
+    auto text = prompt_content(message["content"]);
+    if (!text.empty()) {
+      message["content"] = std::move(text);
+    }
+  }
+  return fallback;
+}
+
+}  // namespace
 
 JinjaChatTemplate::JinjaChatTemplate(const TokenizerArgs& args) : args_(args) {
   try {
@@ -86,6 +193,9 @@ std::optional<std::string> JinjaChatTemplate::apply(
       }
       message_json["tool_calls"] = std::move(tool_calls_json);
     }
+    if (message.reasoning_content.has_value()) {
+      message_json["reasoning_content"] = message.reasoning_content.value();
+    }
     if (!message.tool_call_id.empty()) {
       message_json["tool_call_id"] = message.tool_call_id;
     }
@@ -107,7 +217,18 @@ std::optional<std::string> JinjaChatTemplate::apply(
     tools_json.push_back(tool_json);
   }
   // apply the template
-  return apply(messages_json, tools_json, chat_template_kwargs);
+  auto prompt = apply(messages_json, tools_json, chat_template_kwargs);
+  if (!prompt.has_value() || has_all_thinking(prompt.value(), messages_json)) {
+    return prompt;
+  }
+
+  auto fallback_messages = with_thinking_fallback(messages_json);
+  auto fallback_prompt =
+      apply(fallback_messages, tools_json, chat_template_kwargs);
+  if (fallback_prompt.has_value()) {
+    return fallback_prompt;
+  }
+  return prompt;
 }
 
 std::optional<std::string> JinjaChatTemplate::apply(
@@ -141,6 +262,17 @@ nlohmann::ordered_json JinjaChatTemplate::get_mm_content(
 
     if (item.type == "text") {
       item_json["text"] = item.text;
+    } else if (item.type == "thinking") {
+      item_json["thinking"] = item.thinking;
+      if (!item.signature.empty()) {
+        item_json["signature"] = item.signature;
+      }
+    } else if (item.type == "redacted_thinking") {
+      item_json["data"] = item.data;
+    } else if (item.type == "tool_use") {
+      item_json["id"] = item.id;
+      item_json["name"] = item.name;
+      item_json["input"] = item.input;
     } else {
       item_json[item.type] = "mm place holder";
     }

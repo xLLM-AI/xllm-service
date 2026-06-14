@@ -19,3 +19,13 @@ cc_test(
     :anthropic_adapter
     GTest::gtest_main
 )
+
+cc_test(
+  NAME
+    anthropic_stream_encoder_test
+  SRCS
+    anthropic_stream_encoder_test.cpp
+  DEPS
+    :anthropic_stream_encoder
+    GTest::gtest_main
+)

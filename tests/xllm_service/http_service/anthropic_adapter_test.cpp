@@ -18,11 +18,15 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <variant>
 
 namespace xllm_service {
 namespace {
+
+constexpr const char* kOldThinkingSignature =
+    "xllm-anthropic-thinking-signature-v1";
 
 xllm::proto::AnthropicMessagesRequest parse_request(const std::string& json) {
   xllm::proto::AnthropicMessagesRequest request;
@@ -460,6 +464,336 @@ TEST(AnthropicAdapterTest, MapsToolUseAndToolResultHistory) {
   EXPECT_EQ(messages[1].tool_call_id, "toolu_1");
 }
 
+TEST(AnthropicAdapterTest, DropsEmptyBashToolUseAndMatchingResultHistory) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "messages": [
+      {
+        "role": "assistant",
+        "content": [
+          {"type": "text", "text": "Trying a command."},
+          {
+            "type": "tool_use",
+            "id": "toolu_bad",
+            "name": "Bash",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_bad",
+            "content": "<tool_use_error>InputValidationError: Bash failed</tool_use_error>",
+            "is_error": true
+          },
+          {"type": "text", "text": "Continue from where you left off."}
+        ]
+      }
+    ]
+  })");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_EQ(chat_request.messages_size(), 2);
+  const auto& assistant = chat_request.messages(0);
+  EXPECT_EQ(assistant.role(), "assistant");
+  EXPECT_EQ(assistant.content(), "Trying a command.");
+  EXPECT_EQ(assistant.tool_calls_size(), 0);
+
+  const auto& user = chat_request.messages(1);
+  EXPECT_EQ(user.role(), "user");
+  EXPECT_EQ(user.content(), "Continue from where you left off.");
+
+  ASSERT_EQ(messages.size(), 2);
+  EXPECT_EQ(messages[0].role, "assistant");
+  EXPECT_FALSE(messages[0].tool_calls.has_value());
+  EXPECT_EQ(messages[1].role, "user");
+  EXPECT_EQ(text_content(messages[1]), "Continue from where you left off.");
+}
+
+TEST(AnthropicAdapterTest, PreservesThinkingBlocksInHistory) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "messages": [
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "hidden reasoning",
+            "signature": "sig_1"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "write_file",
+            "input": {"file_path": "two_sum.py", "content": "print_one"}
+          },
+          {"type": "redacted_thinking", "data": "opaque_base64"},
+          {"type": "text", "text": "done"}
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "content": "Error writing file"
+          }
+        ]
+      }
+    ]
+  })");
+
+  const auto& blocks = request.messages(0).content_blocks().blocks();
+  ASSERT_EQ(blocks.size(), 4);
+  EXPECT_EQ(blocks[0].type(), "thinking");
+  ASSERT_TRUE(blocks[0].has_thinking());
+  EXPECT_EQ(blocks[0].thinking(), "hidden reasoning");
+  ASSERT_TRUE(blocks[0].has_signature());
+  EXPECT_EQ(blocks[0].signature(), "sig_1");
+  EXPECT_EQ(blocks[1].type(), "tool_use");
+  EXPECT_EQ(blocks[2].type(), "redacted_thinking");
+  ASSERT_TRUE(blocks[2].has_data());
+  EXPECT_EQ(blocks[2].data(), "opaque_base64");
+  EXPECT_EQ(blocks[3].type(), "text");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_EQ(chat_request.messages_size(), 2);
+  const auto& assistant = chat_request.messages(0);
+  EXPECT_EQ(assistant.role(), "assistant");
+  EXPECT_EQ(assistant.content(), "done");
+  ASSERT_TRUE(assistant.has_reasoning_content());
+  EXPECT_EQ(assistant.reasoning_content(), "hidden reasoning");
+  ASSERT_EQ(assistant.tool_calls_size(), 1);
+  EXPECT_EQ(assistant.tool_calls(0).id(), "toolu_1");
+  EXPECT_EQ(assistant.tool_calls(0).function().name(), "write_file");
+  auto args =
+      nlohmann::json::parse(assistant.tool_calls(0).function().arguments());
+  EXPECT_EQ(args["file_path"], "two_sum.py");
+  EXPECT_EQ(args["content"], "print_one");
+
+  const auto& tool_result = chat_request.messages(1);
+  EXPECT_EQ(tool_result.role(), "tool");
+  EXPECT_EQ(tool_result.tool_call_id(), "toolu_1");
+  EXPECT_EQ(tool_result.content(), "Error writing file");
+
+  ASSERT_EQ(messages.size(), 2);
+  EXPECT_EQ(messages[0].role, "assistant");
+  ASSERT_TRUE(messages[0].tool_calls.has_value());
+  ASSERT_TRUE(messages[0].reasoning_content.has_value());
+  EXPECT_EQ(messages[0].reasoning_content.value(), "hidden reasoning");
+  ASSERT_TRUE(
+      std::holds_alternative<Message::MMContentVec>(messages[0].content));
+  const auto& content = std::get<Message::MMContentVec>(messages[0].content);
+  ASSERT_EQ(content.size(), 4);
+  EXPECT_EQ(content[0].type, "thinking");
+  EXPECT_EQ(content[0].thinking, "hidden reasoning");
+  EXPECT_EQ(content[0].signature, "sig_1");
+  EXPECT_EQ(content[1].type, "tool_use");
+  EXPECT_EQ(content[1].id, "toolu_1");
+  EXPECT_EQ(content[1].name, "write_file");
+  EXPECT_EQ(content[1].input["file_path"], "two_sum.py");
+  EXPECT_EQ(content[1].input["content"], "print_one");
+  EXPECT_EQ(content[2].type, "redacted_thinking");
+  EXPECT_EQ(content[2].data, "opaque_base64");
+  EXPECT_EQ(content[3].type, "text");
+  EXPECT_EQ(content[3].text, "done");
+  EXPECT_EQ(messages[1].role, "tool");
+}
+
+TEST(AnthropicAdapterTest, RendersPreservedThinkingBlocksToTemplate) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "messages": [
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "plan A",
+            "signature": "sig_a"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "Read",
+            "input": {"path": "a.txt"}
+          },
+          {"type": "redacted_thinking", "data": "opaque_a"},
+          {
+            "type": "thinking",
+            "thinking": "plan B",
+            "signature": "sig_b"
+          },
+          {"type": "text", "text": "done"}
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "content": "missing"
+          }
+        ]
+      }
+    ]
+  })");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_EQ(messages.size(), 2);
+  ASSERT_TRUE(
+      std::holds_alternative<Message::MMContentVec>(messages[0].content));
+  const auto& content = std::get<Message::MMContentVec>(messages[0].content);
+  ASSERT_EQ(content.size(), 5);
+  EXPECT_EQ(content[0].type, "thinking");
+  EXPECT_EQ(content[0].thinking, "plan A");
+  EXPECT_EQ(content[0].signature, "sig_a");
+  EXPECT_EQ(content[1].type, "tool_use");
+  EXPECT_EQ(content[1].id, "toolu_1");
+  EXPECT_EQ(content[1].name, "Read");
+  EXPECT_EQ(content[1].input["path"], "a.txt");
+  EXPECT_EQ(content[2].type, "redacted_thinking");
+  EXPECT_EQ(content[2].data, "opaque_a");
+  EXPECT_EQ(content[3].type, "thinking");
+  EXPECT_EQ(content[3].thinking, "plan B");
+  EXPECT_EQ(content[3].signature, "sig_b");
+  EXPECT_EQ(content[4].type, "text");
+  EXPECT_EQ(content[4].text, "done");
+  ASSERT_TRUE(messages[0].reasoning_content.has_value());
+  EXPECT_EQ(messages[0].reasoning_content.value(), "plan Aplan B");
+  EXPECT_EQ(messages[1].role, "tool");
+  EXPECT_EQ(messages[1].tool_call_id, "toolu_1");
+  EXPECT_EQ(text_content(messages[1]), "missing");
+
+  const std::string template_str =
+      "{% if messages[0]['content'] is string %}{{ messages[0]['content'] }}"
+      "{% endif %}"
+      "{% if messages[0]['content'] is not string %}"
+      "{% for item in messages[0]['content'] %}"
+      "{{ item['type'] }}:"
+      "{% if item['type'] == 'thinking' %}{{ item['thinking'] }}:{{ "
+      "item['signature'] }}{% endif %}"
+      "{% if item['type'] == 'tool_use' %}{{ item['id'] }}:{{ item['name'] "
+      "}}:{{ item['input']['path'] }}{% endif %}"
+      "{% if item['type'] == 'redacted_thinking' %}{{ item['data'] }}{% endif "
+      "%}"
+      "{% if item['type'] == 'text' %}{{ item['text'] }}{% endif %}|"
+      "{% endfor %}"
+      "{% endif %}"
+      "{% for message in messages %}"
+      "{% if message.get('tool_calls') %}"
+      "{% for tool_call in message['tool_calls'] %}"
+      "call={{ tool_call['function']['name'] }}:"
+      "{{ tool_call['function']['arguments'] }}|"
+      "{% endfor %}"
+      "{% endif %}"
+      "{% if message['role'] == 'tool' %}"
+      "tool={{ message['role'] }}:{{ message['tool_call_id'] }}:"
+      "{{ message['content'] }}"
+      "{% endif %}"
+      "{% endfor %}";
+
+  TokenizerArgs args;
+  args.chat_template(template_str);
+  args.bos_token("");
+  args.eos_token("");
+  JinjaChatTemplate template_(args);
+
+  auto prompt = template_.apply(messages);
+  ASSERT_TRUE(prompt.has_value());
+  EXPECT_EQ(prompt.value(),
+            "thinking:plan A:sig_a|tool_use:toolu_1:Read:a.txt|"
+            "redacted_thinking:opaque_a|thinking:plan B:sig_b|text:done|"
+            "call=Read:{\"path\":\"a.txt\"}|"
+            "tool=tool:toolu_1:missing");
+}
+
+TEST(AnthropicAdapterTest, RendersPreservedThinkingForStringTemplate) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "messages": [
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "PTB_marker",
+            "signature": "sig_a"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "Read",
+            "input": {"marker": "TIB_marker"}
+          },
+          {"type": "text", "text": "done"}
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "content": "TRB_marker"
+          }
+        ]
+      }
+    ]
+  })");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  const std::string template_str =
+      "{% for message in messages %}"
+      "{{ message['role'] }}:"
+      "{% if message['content'] is string %}{{ message['content'] }}{% endif "
+      "%}|"
+      "{% if message.get('tool_calls') %}"
+      "{% for tool_call in message['tool_calls'] %}"
+      "call={{ tool_call['function']['arguments'] }}|"
+      "{% endfor %}"
+      "{% endif %}"
+      "{% endfor %}";
+
+  TokenizerArgs args;
+  args.chat_template(template_str);
+  args.bos_token("");
+  args.eos_token("");
+  JinjaChatTemplate template_(args);
+
+  auto prompt = template_.apply(messages);
+  ASSERT_TRUE(prompt.has_value());
+  EXPECT_NE(prompt->find("<think>PTB_marker</think>"), std::string::npos);
+  EXPECT_NE(prompt->find("TIB_marker"), std::string::npos);
+  EXPECT_NE(prompt->find("TRB_marker"), std::string::npos);
+}
+
 TEST(AnthropicAdapterTest, BuildsNonStreamAnthropicJson) {
   llm::RequestOutput output;
   output.request_id = "anthropiccmpl-test";
@@ -497,6 +831,50 @@ TEST(AnthropicAdapterTest, BuildsNonStreamAnthropicJson) {
   EXPECT_FALSE(json["usage"].contains("total_tokens"));
 }
 
+TEST(AnthropicAdapterTest, BuildsThinkingNonStreamAnthropicJson) {
+  llm::RequestOutput output;
+  output.request_id = "anthropiccmpl-test";
+  output.finished = true;
+  llm::SequenceOutput seq;
+  seq.index = 0;
+  seq.text = "answer";
+  seq.finish_reason = "stop";
+  output.outputs.push_back(std::move(seq));
+
+  xllm::proto::AnthropicMessagesResponse response;
+  auto result = fill_anthropic_resp("test-model", output, &response);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  std::string json_str;
+  std::string error;
+  ASSERT_TRUE(anthropic_json(
+      response, std::optional<std::string>("reason"), &json_str, &error))
+      << error;
+  auto json = nlohmann::json::parse(json_str);
+
+  ASSERT_EQ(json["content"].size(), 2);
+  EXPECT_EQ(json["content"][0]["type"], "thinking");
+  EXPECT_EQ(json["content"][0]["thinking"], "reason");
+  ASSERT_TRUE(json["content"][0].contains("signature"));
+  ASSERT_TRUE(json["content"][0]["signature"].is_string());
+  const auto signature = json["content"][0]["signature"].get<std::string>();
+  EXPECT_FALSE(signature.empty());
+  EXPECT_NE(signature, kOldThinkingSignature);
+  EXPECT_EQ(json["content"][1]["type"], "text");
+  EXPECT_EQ(json["content"][1]["text"], "answer");
+
+  std::string second_json_str;
+  ASSERT_TRUE(anthropic_json(
+      response, std::optional<std::string>("reason"), &second_json_str, &error))
+      << error;
+  auto second_json = nlohmann::json::parse(second_json_str);
+  const auto second_signature =
+      second_json["content"][0]["signature"].get<std::string>();
+  EXPECT_FALSE(second_signature.empty());
+  EXPECT_NE(second_signature, kOldThinkingSignature);
+  EXPECT_NE(second_signature, signature);
+}
+
 TEST(AnthropicAdapterTest, BuildsToolUseAnthropicJson) {
   llm::RequestOutput output;
   output.request_id = "anthropiccmpl-test";
@@ -530,150 +908,6 @@ TEST(AnthropicAdapterTest, BuildsToolUseAnthropicJson) {
   EXPECT_EQ(json["content"][0]["id"], "call_1");
   EXPECT_EQ(json["content"][0]["name"], "get_weather");
   EXPECT_EQ(json["content"][0]["input"]["city"], "Beijing");
-}
-
-TEST(AnthropicAdapterTest, BuildsTextStreamEvents) {
-  AnthropicStreamState state;
-  std::vector<xllm::proto::AnthropicStreamEvent> events;
-
-  llm::RequestOutput first;
-  first.request_id = "anthropiccmpl-test";
-  llm::SequenceOutput first_seq;
-  first_seq.index = 0;
-  first_seq.text = "Hel";
-  first.outputs.push_back(std::move(first_seq));
-
-  auto result =
-      fill_anthropic_stream_events("test-model", first, state, events);
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(events.size(), 3);
-  EXPECT_EQ(events[0].type(), "message_start");
-  EXPECT_EQ(events[0].message().id(), "anthropiccmpl-test");
-  EXPECT_EQ(events[0].message().usage().input_tokens(), 0);
-  EXPECT_EQ(events[0].message().usage().output_tokens(), 0);
-  EXPECT_EQ(events[1].type(), "content_block_start");
-  EXPECT_EQ(events[1].index(), 0);
-  EXPECT_EQ(events[1].content_block().type(), "text");
-  EXPECT_EQ(events[1].content_block().text(), "");
-  EXPECT_EQ(events[2].type(), "content_block_delta");
-  EXPECT_EQ(events[2].index(), 0);
-  EXPECT_EQ(events[2].delta().type(), "text_delta");
-  EXPECT_EQ(events[2].delta().text(), "Hel");
-
-  llm::RequestOutput second;
-  second.request_id = "anthropiccmpl-test";
-  llm::SequenceOutput second_seq;
-  second_seq.index = 0;
-  second_seq.text = "lo";
-  second.outputs.push_back(std::move(second_seq));
-  events.clear();
-
-  result = fill_anthropic_stream_events("test-model", second, state, events);
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(events.size(), 1);
-  EXPECT_EQ(events[0].type(), "content_block_delta");
-  EXPECT_EQ(events[0].delta().text(), "lo");
-
-  llm::RequestOutput final;
-  final.request_id = "anthropiccmpl-test";
-  final.finished = true;
-  llm::SequenceOutput final_seq;
-  final_seq.index = 0;
-  final_seq.finish_reason = "stop";
-  final.outputs.push_back(std::move(final_seq));
-  llm::Usage usage;
-  usage.num_prompt_tokens = 3;
-  usage.num_generated_tokens = 5;
-  final.usage = usage;
-  events.clear();
-
-  result = fill_anthropic_stream_events("test-model", final, state, events);
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(events.size(), 3);
-  EXPECT_EQ(events[0].type(), "content_block_stop");
-  EXPECT_EQ(events[0].index(), 0);
-  EXPECT_EQ(events[1].type(), "message_delta");
-  EXPECT_EQ(events[1].delta().stop_reason(), "end_turn");
-  EXPECT_EQ(events[1].usage().input_tokens(), 3);
-  EXPECT_EQ(events[1].usage().output_tokens(), 5);
-  EXPECT_EQ(events[2].type(), "message_stop");
-
-  std::string sse;
-  std::string error;
-  ASSERT_TRUE(anthropic_event_sse(events[1], &sse, &error)) << error;
-  EXPECT_NE(sse.find("event: message_delta\n"), std::string::npos);
-  EXPECT_NE(sse.find("\ndata: {"), std::string::npos);
-  EXPECT_NE(sse.find("\"stop_reason\":\"end_turn\""), std::string::npos);
-  EXPECT_EQ(sse.substr(sse.size() - 2), "\n\n");
-  EXPECT_EQ(anthropic_done_sse(), "data: [DONE]\n\n");
-}
-
-TEST(AnthropicAdapterTest, BuildsToolStreamEvents) {
-  AnthropicStreamState state;
-  std::vector<xllm::proto::AnthropicStreamEvent> events;
-
-  llm::RequestOutput text;
-  text.request_id = "anthropiccmpl-test";
-  auto result = add_anthropic_text_delta(
-      "test-model", text, "Let me check ", state, events);
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(events.size(), 3);
-  EXPECT_EQ(events[0].type(), "message_start");
-  EXPECT_EQ(events[1].type(), "content_block_start");
-  EXPECT_EQ(events[1].content_block().type(), "text");
-  EXPECT_EQ(events[2].type(), "content_block_delta");
-  EXPECT_EQ(events[2].delta().type(), "text_delta");
-
-  events.clear();
-  result = add_anthropic_tool_delta(
-      "test-model", text, "call_1", "get_weather", R"({"city")", state, events);
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(events.size(), 3);
-  EXPECT_EQ(events[0].type(), "content_block_stop");
-  EXPECT_EQ(events[0].index(), 0);
-  EXPECT_EQ(events[1].type(), "content_block_start");
-  EXPECT_EQ(events[1].index(), 1);
-  EXPECT_EQ(events[1].content_block().type(), "tool_use");
-  EXPECT_EQ(events[1].content_block().id(), "call_1");
-  EXPECT_EQ(events[1].content_block().name(), "get_weather");
-  EXPECT_TRUE(events[1].content_block().has_input());
-  EXPECT_EQ(events[2].type(), "content_block_delta");
-  EXPECT_EQ(events[2].index(), 1);
-  EXPECT_EQ(events[2].delta().type(), "input_json_delta");
-  EXPECT_EQ(events[2].delta().partial_json(), R"({"city")");
-
-  events.clear();
-  result = add_anthropic_tool_delta(
-      "test-model", text, "", "", R"(: "Beijing"})", state, events);
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(events.size(), 1);
-  EXPECT_EQ(events[0].type(), "content_block_delta");
-  EXPECT_EQ(events[0].index(), 1);
-  EXPECT_EQ(events[0].delta().partial_json(), R"(: "Beijing"})");
-
-  llm::RequestOutput final;
-  final.request_id = "anthropiccmpl-test";
-  final.finished = true;
-  llm::SequenceOutput final_seq;
-  final_seq.index = 0;
-  final_seq.finish_reason = "stop";
-  final.outputs.push_back(std::move(final_seq));
-  llm::Usage usage;
-  usage.num_prompt_tokens = 6;
-  usage.num_generated_tokens = 9;
-  final.usage = usage;
-  events.clear();
-
-  result = finish_anthropic_stream("test-model", final, state, events);
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(events.size(), 3);
-  EXPECT_EQ(events[0].type(), "content_block_stop");
-  EXPECT_EQ(events[0].index(), 1);
-  EXPECT_EQ(events[1].type(), "message_delta");
-  EXPECT_EQ(events[1].delta().stop_reason(), "tool_use");
-  EXPECT_EQ(events[1].usage().input_tokens(), 6);
-  EXPECT_EQ(events[1].usage().output_tokens(), 9);
-  EXPECT_EQ(events[2].type(), "message_stop");
 }
 
 TEST(AnthropicAdapterTest, MapsLengthStopReason) {

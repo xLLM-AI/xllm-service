@@ -28,12 +28,33 @@ cc_library(
     ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/core
   DEPS
     :chat_template
+    :message_projection
     :common
     glog::glog
     nlohmann_json::nlohmann_json
     proto_xllm
 )
 target_link_libraries(anthropic_adapter PUBLIC brpc-static leveldb::leveldb ZLIB::ZLIB protobuf::libprotobuf OpenSSL::SSL OpenSSL::Crypto)
+
+cc_library(
+  NAME
+    anthropic_stream_encoder
+  HDRS
+    anthropic_stream_encoder.h
+  SRCS
+    anthropic_stream_encoder.cpp
+  INCLUDES
+    ${CMAKE_SOURCE_DIR}/third_party/xllm
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm
+    ${CMAKE_SOURCE_DIR}/third_party/xllm/xllm/core
+  DEPS
+    :anthropic_adapter
+    :common
+    glog::glog
+    nlohmann_json::nlohmann_json
+    proto_xllm
+)
+target_link_libraries(anthropic_stream_encoder PUBLIC brpc-static leveldb::leveldb ZLIB::ZLIB protobuf::libprotobuf OpenSSL::SSL OpenSSL::Crypto)
 
 cc_library(
   NAME

@@ -4,6 +4,7 @@ cc_library(
   NAME
   common
   HDRS
+    anthropic_tracer.h
     call_data.h
     closure_guard.h
     concurrent_queue.h
@@ -22,6 +23,7 @@ cc_library(
     xllm/status.h
     xllm/uuid.h
   SRCS
+    anthropic_tracer.cpp
     global_gflags.cpp
     json_reader.cpp
     threadpool.cpp

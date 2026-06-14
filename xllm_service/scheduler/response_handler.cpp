@@ -17,7 +17,9 @@ limitations under the License.
 
 #include <optional>
 
+#include "common/anthropic_tracer.h"
 #include "http_service/anthropic_adapter.h"
+#include "http_service/anthropic_stream_encoder.h"
 #include "scheduler/xllm_chat_parse_bridge.h"
 #include "xllm/xllm/api_service/stream_output_parser.h"
 #include "xllm/xllm/api_service/utils.h"
@@ -25,6 +27,35 @@ limitations under the License.
 
 namespace xllm_service {
 namespace {
+
+size_t find_tool_start(const std::string& text) {
+  size_t pos = std::string::npos;
+  const std::vector<std::string> markers = {
+      "<tool_call",
+      "<function=",
+      "<|tool_calls_section_begin|>",
+      "<|tool_call_begin|>",
+      "<｜tool▁calls▁begin｜>",
+      "\"tool_calls\"",
+      "'tool_calls'",
+  };
+
+  for (const auto& marker : markers) {
+    size_t marker_pos = text.find(marker);
+    if (marker_pos != std::string::npos && marker_pos < pos) {
+      pos = marker_pos;
+    }
+  }
+  return pos;
+}
+
+AnthropicTracer make_anthropic_tracer(
+    const std::shared_ptr<AnthropicCallData>& call_data) {
+  return AnthropicTracer(
+      [call_data](const std::string& formatted) { call_data->trace(formatted); },
+      call_data->request().request_id(),
+      call_data->request().service_request_id());
+}
 
 void set_logprobs(xllm::proto::ChatChoice* choice,
                   const std::optional<std::vector<llm::LogProb>>& logprobs) {
@@ -195,12 +226,8 @@ ResponseHandler::create_chat_stream_parse_state(
     const std::string& reasoning_parser,
     bool force_reasoning) {
   auto state = std::make_shared<ChatStreamParseState>();
-  state->stream_parser =
-      create_stream_output_parser_with_xllm(tools,
-                                            model,
-                                            tool_call_parser,
-                                            reasoning_parser,
-                                            force_reasoning);
+  state->stream_parser = create_stream_output_parser_with_xllm(
+      tools, model, tool_call_parser, reasoning_parser, force_reasoning);
   return state;
 }
 
@@ -440,9 +467,10 @@ bool ResponseHandler::send_delta_to_client(
     std::shared_ptr<AnthropicCallData> call_data,
     const std::string& model,
     const llm::RequestOutput& output,
-    AnthropicStreamState& stream_state,
+    AnthropicStreamEncoder& encoder,
     std::shared_ptr<xllm::StreamOutputParser> stream_parser) {
-  std::vector<xllm::proto::AnthropicStreamEvent> events;
+  std::vector<std::string> sse_events;
+  auto tracer = make_anthropic_tracer(call_data);
 
   if (stream_parser && !output.outputs.empty()) {
     stream_parser->check_resize_for_index(output.outputs.size() - 1);
@@ -451,16 +479,92 @@ bool ResponseHandler::send_delta_to_client(
   for (const auto& seq_output : output.outputs) {
     const auto& index = seq_output.index;
     std::string cur_text = seq_output.text;
+    tracer.trace("stream_model_delta",
+                 "index=" + std::to_string(index) + " finished=" +
+                     (output.finished ? "true" : "false") + " finish_reason=" +
+                     seq_output.finish_reason.value_or("") + " text=" +
+                     cur_text);
+
+    // Splits a chunk into reasoning (emitted now) and the remaining plain text
+    // (accumulated into *normal_text). Reasoning/text encoding is delegated to
+    // the encoder; only the split decision lives here.
+    auto emit_reasoning = [&](std::string text,
+                              std::string* normal_text) -> bool {
+      if (text.empty() || !stream_parser || !stream_parser->is_reasoning()) {
+        if (normal_text) {
+          *normal_text += text;
+        }
+        return true;
+      }
+
+      auto* parser = stream_parser->get_reasoning_parser(index);
+      auto result = parser->parse_stream_chunk(text);
+      if (result.reasoning_text.has_value()) {
+        auto adapt_result =
+            encoder.on_reasoning(output, result.reasoning_text.value(),
+                                 &sse_events);
+        if (!adapt_result.ok) {
+          return call_data->finish_with_error(adapt_result.error);
+        }
+      }
+      if (normal_text && result.normal_text.has_value()) {
+        *normal_text += result.normal_text.value();
+      }
+      return true;
+    };
+
+    auto emit_text = [&](const std::string& text) -> bool {
+      auto result = encoder.on_text(output, text, &sse_events);
+      if (!result.ok) {
+        return call_data->finish_with_error(result.error);
+      }
+      return true;
+    };
 
     if (!cur_text.empty() && stream_parser && stream_parser->is_tool_call()) {
       auto* parser = stream_parser->get_tool_call_parser(index);
       if (parser) {
-        auto parse_result = parser->parse_streaming_increment(cur_text);
+        std::string tool_text = cur_text;
+        const bool parsing_tool =
+            encoder.pending_tool_call() ||
+            encoder.last_content_block_type() == "tool_use";
+        bool saw_tool_start = find_tool_start(tool_text) != std::string::npos;
+        if (!parsing_tool) {
+          size_t tool_pos = find_tool_start(tool_text);
+          if (tool_pos != std::string::npos) {
+            std::string normal_text;
+            if (!emit_reasoning(tool_text.substr(0, tool_pos), &normal_text)) {
+              return false;
+            }
+            if (!normal_text.empty() && !emit_text(normal_text)) {
+              return false;
+            }
+            tool_text = tool_text.substr(tool_pos);
+            saw_tool_start = true;
+          }
+        }
+        if (!parsing_tool && find_tool_start(tool_text) == std::string::npos) {
+          std::string normal_text;
+          if (!emit_reasoning(tool_text, &normal_text)) {
+            return false;
+          }
+          if (!normal_text.empty() && !emit_text(normal_text)) {
+            return false;
+          }
+          tool_text.clear();
+        }
+        if (saw_tool_start) {
+          encoder.set_pending_tool_call(true);
+        }
+
+        auto parse_result = parser->parse_streaming_increment(tool_text);
         if (!parse_result.normal_text.empty()) {
-          auto result = add_anthropic_text_delta(
-              model, output, parse_result.normal_text, stream_state, events);
-          if (!result.ok) {
-            return call_data->finish_with_error(result.error);
+          std::string normal_text;
+          if (!emit_reasoning(parse_result.normal_text, &normal_text)) {
+            return false;
+          }
+          if (!normal_text.empty() && !emit_text(normal_text)) {
+            return false;
           }
         }
 
@@ -472,25 +576,36 @@ bool ResponseHandler::send_delta_to_client(
           if (call_item.name.has_value()) {
             tool_call_id = xllm::function_call::utils::generate_tool_call_id();
             function_name = call_item.name.value();
+            encoder.set_pending_tool_call(false);
           }
 
-          auto result = add_anthropic_tool_delta(model,
-                                                 output,
-                                                 tool_call_id,
-                                                 function_name,
-                                                 call_item.parameters,
-                                                 stream_state,
-                                                 events);
+          auto result = encoder.on_tool(output,
+                                        tool_call_id,
+                                        function_name,
+                                        call_item.parameters,
+                                        &sse_events);
           if (!result.ok) {
             return call_data->finish_with_error(result.error);
           }
+          if (encoder.last_content_block_type() == "tool_use") {
+            encoder.set_pending_tool_call(false);
+          }
         }
       }
+    } else if (!cur_text.empty() && stream_parser &&
+               stream_parser->is_reasoning()) {
+      std::string normal_text;
+      if (!emit_reasoning(cur_text, &normal_text)) {
+        return false;
+      }
+      // The plain-text remainder after the reasoning boundary must still be
+      // emitted as a text block (the tool branch above does the same).
+      if (!normal_text.empty() && !emit_text(normal_text)) {
+        return false;
+      }
     } else if (!cur_text.empty()) {
-      auto result = add_anthropic_text_delta(
-          model, output, cur_text, stream_state, events);
-      if (!result.ok) {
-        return call_data->finish_with_error(result.error);
+      if (!emit_text(cur_text)) {
+        return false;
       }
     }
 
@@ -498,12 +613,8 @@ bool ResponseHandler::send_delta_to_client(
         stream_parser->get_has_tool_call(index)) {
       auto send_func = [&](const std::string& arguments, int tool_index) {
         (void)tool_index;
-        auto result = add_anthropic_tool_delta(
-            model, output, "", "", arguments, stream_state, events);
-        if (!result.ok) {
-          return false;
-        }
-        return true;
+        auto result = encoder.on_tool(output, "", "", arguments, &sse_events);
+        return result.ok;
       };
       if (!xllm::api_service::check_for_unstreamed_tool_args(
               stream_parser, index, send_func)) {
@@ -513,19 +624,14 @@ bool ResponseHandler::send_delta_to_client(
   }
 
   if (output.finished) {
-    auto result = finish_anthropic_stream(model, output, stream_state, events);
+    auto result = encoder.finish(output, &sse_events);
     if (!result.ok) {
       return call_data->finish_with_error(result.error);
     }
   }
 
-  for (const auto& event : events) {
-    std::string sse;
-    std::string err_msg;
-    if (!anthropic_event_sse(event, &sse, &err_msg)) {
-      LOG(ERROR) << "Anthropic stream event json failed: " << err_msg;
-      return call_data->finish_with_error(err_msg);
-    }
+  for (const auto& sse : sse_events) {
+    tracer.trace("stream_sse", sse);
     if (!call_data->write(sse)) {
       return false;
     }
@@ -686,13 +792,19 @@ bool ResponseHandler::send_result_to_client(
     const std::string& reasoning_parser,
     bool force_reasoning) {
   auto& response = call_data->response();
+  auto tracer = make_anthropic_tracer(call_data);
   llm::RequestOutput output = req_output;
   const google::protobuf::RepeatedPtrField<::xllm::proto::ToolCall>*
       tool_calls = nullptr;
   std::optional<google::protobuf::RepeatedPtrField<::xllm::proto::ToolCall>>
       parsed_tool_calls;
+  std::optional<std::string> reasoning_content;
 
   if (!output.outputs.empty() && !output.outputs.front().text.empty()) {
+    tracer.trace("non_stream_model_output",
+                 "finish_reason=" +
+                     output.outputs.front().finish_reason.value_or("") +
+                     " text=" + output.outputs.front().text);
     auto parsed = parse_chat_output_with_xllm(
         output.outputs.front().text,
         tools,
@@ -706,9 +818,20 @@ bool ResponseHandler::send_result_to_client(
     if (!parsed.finish_reason.empty()) {
       output.outputs.front().finish_reason = std::move(parsed.finish_reason);
     }
+    if (parsed.reasoning_content.has_value()) {
+      reasoning_content = std::move(parsed.reasoning_content.value());
+    }
     if (parsed.tool_calls.has_value()) {
       parsed_tool_calls = std::move(parsed.tool_calls.value());
       tool_calls = &parsed_tool_calls.value();
+    }
+    tracer.trace("non_stream_parsed_output",
+                 "text=" + output.outputs.front().text + " has_reasoning=" +
+                     (reasoning_content.has_value() ? "true" : "false") +
+                     " has_tool_calls=" +
+                     (tool_calls == nullptr ? "false" : "true"));
+    if (reasoning_content.has_value()) {
+      tracer.trace("non_stream_reasoning", reasoning_content.value());
     }
   }
 
@@ -719,10 +842,11 @@ bool ResponseHandler::send_result_to_client(
 
   std::string json_output;
   std::string err_msg;
-  if (!anthropic_json(response, &json_output, &err_msg)) {
+  if (!anthropic_json(response, reasoning_content, &json_output, &err_msg)) {
     LOG(ERROR) << "Anthropic response json failed: " << err_msg;
     return call_data->finish_with_error(err_msg);
   }
+  tracer.trace("non_stream_json_response", json_output);
   return call_data->write_and_finish(json_output);
 }
 
