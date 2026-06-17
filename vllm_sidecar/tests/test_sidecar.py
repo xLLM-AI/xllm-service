@@ -221,6 +221,23 @@ def test_etcd_gateway_get_handles_empty_value(monkeypatch):
     assert EtcdGatewayClient("127.0.0.1:2379").get("key") == ""
 
 
+def test_etcd_gateway_coerces_non_object_200_to_empty(monkeypatch):
+    # A 200 whose JSON body is not an object (e.g. a list/null) must not crash
+    # callers that rely on dict .get(); it surfaces as a normal EtcdError.
+    monkeypatch.setattr(requests, "Session", lambda: _Session([_Response(payload=[])]))
+    with pytest.raises(EtcdError):
+        EtcdGatewayClient("127.0.0.1:2379").lease_grant(6)
+
+
+def test_etcd_gateway_keepalive_handles_null_ttl(monkeypatch):
+    monkeypatch.setattr(
+        requests,
+        "Session",
+        lambda: _Session([_Response(payload={"result": {"TTL": None}})]),
+    )
+    assert EtcdGatewayClient("127.0.0.1:2379").lease_keepalive("lease-1") == 0
+
+
 def test_sidecar_registration_keepalive_and_deregister(monkeypatch):
     etcd = _install_fakes(monkeypatch)
     sc = sidecar_mod.Sidecar(_args())

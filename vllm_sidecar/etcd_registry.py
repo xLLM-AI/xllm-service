@@ -89,10 +89,13 @@ class EtcdGatewayClient:
                 r = self._session.post(base + path, json=body, timeout=self._timeout)
                 if r.status_code == 200:
                     try:
-                        return r.json()
+                        data = r.json()
                     except ValueError as e:
                         last_err = EtcdError(f"invalid JSON response from {path}: {e}")
                         continue
+                    # Every v3 gateway endpoint returns a JSON object; coerce any
+                    # other shape (null/list) to {} so callers can rely on .get().
+                    return data if isinstance(data, dict) else {}
                 last_err = EtcdError(f"{path} -> HTTP {r.status_code}: {r.text[:200]}")
             except requests.RequestException as e:  # connection/timeout
                 last_err = e
@@ -111,10 +114,10 @@ class EtcdGatewayClient:
     def lease_keepalive(self, lease_id: str) -> int:
         """Refresh a lease once; returns the remaining TTL (0 == lease gone)."""
         resp = self._post("/v3/lease/keepalive", {"ID": lease_id})
-        # "result" may be present but null (proto3 JSON for an empty message).
+        # "result" may be present but null (proto3 JSON for an empty message),
+        # and "TTL" itself may be missing or null; treat all of these as 0.
         result = resp.get("result") or {}
-        ttl = result.get("TTL", "0")
-        return int(ttl)
+        return int(result.get("TTL") or 0)
 
     def lease_revoke(self, lease_id: str) -> None:
         """Revoke a lease -> its key is deleted immediately."""
