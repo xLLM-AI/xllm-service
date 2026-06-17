@@ -133,4 +133,6 @@ class EtcdGatewayClient:
         kvs = resp.get("kvs")
         if not kvs:
             return None
-        return base64.b64decode(kvs[0]["value"]).decode("utf-8")
+        # proto3 JSON omits empty values, so "value" may be absent for an
+        # empty string; treat that as "".
+        return base64.b64decode(kvs[0].get("value", "")).decode("utf-8")

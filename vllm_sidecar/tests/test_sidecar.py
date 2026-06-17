@@ -213,6 +213,14 @@ def test_etcd_gateway_keepalive_handles_null_result(monkeypatch):
     assert EtcdGatewayClient("127.0.0.1:2379").lease_keepalive("lease-1") == 0
 
 
+def test_etcd_gateway_get_handles_empty_value(monkeypatch):
+    # proto3 JSON omits an empty "value" field; get() must return "" not crash.
+    monkeypatch.setattr(
+        requests, "Session", lambda: _Session([_Response(payload={"kvs": [{}]})])
+    )
+    assert EtcdGatewayClient("127.0.0.1:2379").get("key") == ""
+
+
 def test_sidecar_registration_keepalive_and_deregister(monkeypatch):
     etcd = _install_fakes(monkeypatch)
     sc = sidecar_mod.Sidecar(_args())
