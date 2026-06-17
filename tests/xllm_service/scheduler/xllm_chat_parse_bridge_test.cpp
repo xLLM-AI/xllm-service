@@ -126,8 +126,8 @@ TEST(XllmChatParseBridgeTest, StreamsAdjacentGlmToolCallsSplitAcrossChunks) {
     EXPECT_FALSE(call.name.has_value());
   }
 
-  auto third =
-      parser->parse_streaming_increment("</arg_key><arg_value>find .</arg_value>");
+  auto third = parser->parse_streaming_increment(
+      "</arg_key><arg_value>find .</arg_value>");
   EXPECT_TRUE(third.normal_text.empty());
   ASSERT_EQ(third.calls.size(), 1);
   ASSERT_TRUE(third.calls[0].name.has_value());

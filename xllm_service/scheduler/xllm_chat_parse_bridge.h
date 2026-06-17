@@ -16,13 +16,13 @@ limitations under the License.
 #pragma once
 
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "chat.pb.h"
 #include "common/types.h"
-#include <nlohmann/json.hpp>
 
 namespace xllm {
 class StreamOutputParser;

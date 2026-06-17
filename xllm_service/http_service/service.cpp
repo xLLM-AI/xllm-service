@@ -73,7 +73,8 @@ AnthropicTracer make_anthropic_tracer(const std::shared_ptr<Request>& request) {
     sink = request->trace_callback;
     service_request_id = request->service_request_id;
   }
-  return AnthropicTracer(std::move(sink), /*request_id=*/"", service_request_id);
+  return AnthropicTracer(
+      std::move(sink), /*request_id=*/"", service_request_id);
 }
 
 nlohmann::json proto_value_to_json(const google::protobuf::Value& pb_value);
@@ -713,12 +714,13 @@ void XllmHttpServiceImpl::AnthropicMessages(
   req_pb->mutable_routing()->set_decode_name(
       service_request->routing.decode_name);
 
-  auto call_data = std::make_shared<AnthropicCallData>(cntl,
-                                                       service_request->stream,
-                                                       done_guard.release(),
-                                                       req_pb,
-                                                       resp_pb,
-                                                       service_request->trace_callback);
+  auto call_data =
+      std::make_shared<AnthropicCallData>(cntl,
+                                          service_request->stream,
+                                          done_guard.release(),
+                                          req_pb,
+                                          resp_pb,
+                                          service_request->trace_callback);
   if (!call_data->x_request_id.empty()) {
     req_pb->set_x_request_id(call_data->x_request_id);
   }

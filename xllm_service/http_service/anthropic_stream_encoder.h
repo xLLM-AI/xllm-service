@@ -84,10 +84,9 @@ class AnthropicStreamEncoder {
   void add_sig_delta(std::vector<xllm::proto::AnthropicStreamEvent>* events);
   void add_block_stop(std::vector<xllm::proto::AnthropicStreamEvent>* events);
   void start_text_block(std::vector<xllm::proto::AnthropicStreamEvent>* events);
-  void start_tool_block(
-      const std::string& tool_call_id,
-      const std::string& function_name,
-      std::vector<xllm::proto::AnthropicStreamEvent>* events);
+  void start_tool_block(const std::string& tool_call_id,
+                        const std::string& function_name,
+                        std::vector<xllm::proto::AnthropicStreamEvent>* events);
   void add_text_delta(const std::string& text,
                       std::vector<xllm::proto::AnthropicStreamEvent>* events);
   void add_message_delta(

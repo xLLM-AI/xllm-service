@@ -52,7 +52,9 @@ size_t find_tool_start(const std::string& text) {
 AnthropicTracer make_anthropic_tracer(
     const std::shared_ptr<AnthropicCallData>& call_data) {
   return AnthropicTracer(
-      [call_data](const std::string& formatted) { call_data->trace(formatted); },
+      [call_data](const std::string& formatted) {
+        call_data->trace(formatted);
+      },
       call_data->request().request_id(),
       call_data->request().service_request_id());
 }
@@ -480,10 +482,10 @@ bool ResponseHandler::send_delta_to_client(
     const auto& index = seq_output.index;
     std::string cur_text = seq_output.text;
     tracer.trace("stream_model_delta",
-                 "index=" + std::to_string(index) + " finished=" +
-                     (output.finished ? "true" : "false") + " finish_reason=" +
-                     seq_output.finish_reason.value_or("") + " text=" +
-                     cur_text);
+                 "index=" + std::to_string(index) +
+                     " finished=" + (output.finished ? "true" : "false") +
+                     " finish_reason=" + seq_output.finish_reason.value_or("") +
+                     " text=" + cur_text);
 
     // Splits a chunk into reasoning (emitted now) and the remaining plain text
     // (accumulated into *normal_text). Reasoning/text encoding is delegated to
@@ -500,9 +502,8 @@ bool ResponseHandler::send_delta_to_client(
       auto* parser = stream_parser->get_reasoning_parser(index);
       auto result = parser->parse_stream_chunk(text);
       if (result.reasoning_text.has_value()) {
-        auto adapt_result =
-            encoder.on_reasoning(output, result.reasoning_text.value(),
-                                 &sse_events);
+        auto adapt_result = encoder.on_reasoning(
+            output, result.reasoning_text.value(), &sse_events);
         if (!adapt_result.ok) {
           return call_data->finish_with_error(adapt_result.error);
         }
@@ -801,10 +802,10 @@ bool ResponseHandler::send_result_to_client(
   std::optional<std::string> reasoning_content;
 
   if (!output.outputs.empty() && !output.outputs.front().text.empty()) {
-    tracer.trace("non_stream_model_output",
-                 "finish_reason=" +
-                     output.outputs.front().finish_reason.value_or("") +
-                     " text=" + output.outputs.front().text);
+    tracer.trace(
+        "non_stream_model_output",
+        "finish_reason=" + output.outputs.front().finish_reason.value_or("") +
+            " text=" + output.outputs.front().text);
     auto parsed = parse_chat_output_with_xllm(
         output.outputs.front().text,
         tools,
@@ -825,11 +826,11 @@ bool ResponseHandler::send_result_to_client(
       parsed_tool_calls = std::move(parsed.tool_calls.value());
       tool_calls = &parsed_tool_calls.value();
     }
-    tracer.trace("non_stream_parsed_output",
-                 "text=" + output.outputs.front().text + " has_reasoning=" +
-                     (reasoning_content.has_value() ? "true" : "false") +
-                     " has_tool_calls=" +
-                     (tool_calls == nullptr ? "false" : "true"));
+    tracer.trace(
+        "non_stream_parsed_output",
+        "text=" + output.outputs.front().text + " has_reasoning=" +
+            (reasoning_content.has_value() ? "true" : "false") +
+            " has_tool_calls=" + (tool_calls == nullptr ? "false" : "true"));
     if (reasoning_content.has_value()) {
       tracer.trace("non_stream_reasoning", reasoning_content.value());
     }
