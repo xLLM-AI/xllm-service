@@ -138,6 +138,7 @@ def test_health_probe_success_failure_and_model(monkeypatch):
 
     monkeypatch.setattr(requests, "get", fake_get)
     probe = VllmHealthProbe("http://vllm/")
+    monkeypatch.setattr(probe._session, "get", fake_get)
     assert probe.is_healthy()
     assert not probe.is_healthy()
     assert not probe.is_healthy()

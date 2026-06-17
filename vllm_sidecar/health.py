@@ -30,11 +30,14 @@ class VllmHealthProbe:
     def __init__(self, vllm_url: str, timeout: float = 3.0) -> None:
         self._base = vllm_url.rstrip("/")
         self._timeout = timeout
+        # Reuse one connection across the periodic probes (HTTP keep-alive) to
+        # avoid piling up TIME_WAIT sockets on the host.
+        self._session = requests.Session()
 
     def is_healthy(self) -> bool:
         """True iff vLLM `/health` returns 2xx within the timeout."""
         try:
-            r = requests.get(self._base + "/health", timeout=self._timeout)
+            r = self._session.get(self._base + "/health", timeout=self._timeout)
             return 200 <= r.status_code < 300
         except requests.RequestException as e:
             logger.debug("vLLM health probe failed: %s", e)
@@ -43,7 +46,7 @@ class VllmHealthProbe:
     def served_model(self) -> str | None:
         """Best-effort first model id from `/v1/models`, for logging only."""
         try:
-            r = requests.get(self._base + "/v1/models", timeout=self._timeout)
+            r = self._session.get(self._base + "/v1/models", timeout=self._timeout)
             data = r.json().get("data", [])
             return data[0]["id"] if data else None
         except (requests.RequestException, ValueError, KeyError, IndexError):
