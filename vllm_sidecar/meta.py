@@ -73,7 +73,7 @@ def build_instance_key(
     """Full etcd key the master watches, e.g. ``XLLM:DEFAULT:127.0.0.1:18000``.
 
     ``addr`` is the address the master uses to reach the backend -- host:port
-    with NO scheme; xllm-service's ``init_brpc_channel`` prepends ``http://``.
+    with NO scheme; xllm-service selects HTTP via the channel's protocol option.
     """
     logical_key = ETCD_KEYS_PREFIX_MAP[instance_type] + addr
     return normalize_etcd_namespace(etcd_namespace) + logical_key

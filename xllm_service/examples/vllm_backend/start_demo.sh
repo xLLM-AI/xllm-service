@@ -93,7 +93,6 @@ if [ -d "$ROOT/vllm_sidecar" ]; then
       --etcd-endpoints "$ETCD" \
       --vllm-url "http://127.0.0.1:$VLLM_PORT" \
       --register-addr "$INSTANCE_ADDR" \
-      --xllm-service-url "http://127.0.0.1:$HTTP_PORT" \
       > "$SIDECAR_LOG" 2>&1 &
     echo $! > "$SIDECAR_PID"
     ok "sidecar started (pid=$(cat "$SIDECAR_PID"))"
