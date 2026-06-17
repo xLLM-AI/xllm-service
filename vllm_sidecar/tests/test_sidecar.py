@@ -204,6 +204,15 @@ def test_etcd_gateway_raises_on_non_json_200(monkeypatch):
         EtcdGatewayClient("127.0.0.1:2379").lease_grant(6)
 
 
+def test_etcd_gateway_keepalive_handles_null_result(monkeypatch):
+    # etcd may serialize an expired lease as {"result": null}; that must read
+    # back as TTL 0, not raise AttributeError.
+    monkeypatch.setattr(
+        requests, "Session", lambda: _Session([_Response(payload={"result": None})])
+    )
+    assert EtcdGatewayClient("127.0.0.1:2379").lease_keepalive("lease-1") == 0
+
+
 def test_sidecar_registration_keepalive_and_deregister(monkeypatch):
     etcd = _install_fakes(monkeypatch)
     sc = sidecar_mod.Sidecar(_args())

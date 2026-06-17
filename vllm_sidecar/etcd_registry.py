@@ -111,7 +111,9 @@ class EtcdGatewayClient:
     def lease_keepalive(self, lease_id: str) -> int:
         """Refresh a lease once; returns the remaining TTL (0 == lease gone)."""
         resp = self._post("/v3/lease/keepalive", {"ID": lease_id})
-        ttl = resp.get("result", {}).get("TTL", "0")
+        # "result" may be present but null (proto3 JSON for an empty message).
+        result = resp.get("result") or {}
+        ttl = result.get("TTL", "0")
         return int(ttl)
 
     def lease_revoke(self, lease_id: str) -> None:
