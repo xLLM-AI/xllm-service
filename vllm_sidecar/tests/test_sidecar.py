@@ -189,6 +189,21 @@ def test_etcd_gateway_endpoint_scheme_normalization():
     ]
 
 
+def test_etcd_gateway_raises_on_non_json_200(monkeypatch):
+    class _BadJson:
+        status_code = 200
+        text = "<html>proxy error</html>"
+
+        def json(self):
+            raise ValueError("not json")
+
+    monkeypatch.setattr(requests, "Session", lambda: _Session([_BadJson()]))
+    # A 200 with an undecodable body must surface as EtcdError, not a raw
+    # ValueError that would crash the sidecar.
+    with pytest.raises(EtcdError):
+        EtcdGatewayClient("127.0.0.1:2379").lease_grant(6)
+
+
 def test_sidecar_registration_keepalive_and_deregister(monkeypatch):
     etcd = _install_fakes(monkeypatch)
     sc = sidecar_mod.Sidecar(_args())

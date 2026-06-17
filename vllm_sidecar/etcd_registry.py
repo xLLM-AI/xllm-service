@@ -88,7 +88,11 @@ class EtcdGatewayClient:
             try:
                 r = self._session.post(base + path, json=body, timeout=self._timeout)
                 if r.status_code == 200:
-                    return r.json()
+                    try:
+                        return r.json()
+                    except ValueError as e:
+                        last_err = EtcdError(f"invalid JSON response from {path}: {e}")
+                        continue
                 last_err = EtcdError(f"{path} -> HTTP {r.status_code}: {r.text[:200]}")
             except requests.RequestException as e:  # connection/timeout
                 last_err = e
