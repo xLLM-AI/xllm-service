@@ -58,7 +58,13 @@ class EtcdGatewayClient:
         # `endpoints` may be a comma-separated string or a list of host:port.
         if isinstance(endpoints, str):
             endpoints = [e.strip() for e in endpoints.split(",") if e.strip()]
-        self._bases = ["http://" + e.rstrip("/") for e in endpoints]
+        # Keep an explicit scheme if present; only default to http:// otherwise,
+        # so endpoints like "https://host:2379" are not turned into
+        # "http://https://host:2379".
+        self._bases = [
+            e if e.startswith(("http://", "https://")) else "http://" + e
+            for e in (endpoint.rstrip("/") for endpoint in endpoints)
+        ]
         if not self._bases:
             raise ValueError("at least one etcd endpoint is required")
         self._timeout = timeout

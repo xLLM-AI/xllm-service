@@ -178,6 +178,17 @@ def test_etcd_gateway_lease_kv_auth_and_errors(monkeypatch):
         EtcdGatewayClient("")
 
 
+def test_etcd_gateway_endpoint_scheme_normalization():
+    client = EtcdGatewayClient(
+        "127.0.0.1:2379, https://secure:2379, http://plain:2379/"
+    )
+    assert client._bases == [
+        "http://127.0.0.1:2379",
+        "https://secure:2379",
+        "http://plain:2379",
+    ]
+
+
 def test_sidecar_registration_keepalive_and_deregister(monkeypatch):
     etcd = _install_fakes(monkeypatch)
     sc = sidecar_mod.Sidecar(_args())
