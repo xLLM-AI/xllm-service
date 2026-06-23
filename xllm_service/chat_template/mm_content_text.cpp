@@ -13,19 +13,31 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#pragma once
-
-#include <string>
-
-#include "chat.pb.h"
-#include "chat_template/jinja_chat_template.h"
 #include "chat_template/mm_content_text.h"
 
 namespace xllm_service {
 
-// Projects a canonical Message onto the lossy proto ChatMessage transport.
-// Writes into the pre-allocated `out` (arena friendly). Pure projection: it
-// reproduces, field for field, what the request path used to build by hand.
-void to_proto(const Message& msg, xllm::proto::ChatMessage* out);
+std::string flat_text(const Message::MMContentVec& blocks) {
+  std::string text;
+  bool first = true;
+  for (const auto& block : blocks) {
+    if (block.type != "text") {
+      continue;
+    }
+    if (!first) {
+      text += '\n';
+    }
+    text += block.text;
+    first = false;
+  }
+  return text;
+}
+
+bool needs_content_vec(const Message::MMContentVec& blocks) {
+  if (blocks.size() > 1) {
+    return true;
+  }
+  return !blocks.empty() && blocks.front().type != "text";
+}
 
 }  // namespace xllm_service
