@@ -18,6 +18,19 @@ cc_library (
 
 cc_library (
   NAME
+    model_type
+  HDRS
+    model_type.h
+  SRCS
+    model_type.cpp
+  DEPS
+    :common
+    glog::glog
+    nlohmann_json::nlohmann_json
+)
+
+cc_library (
+  NAME
     message_projection
   HDRS
     message_projection.h

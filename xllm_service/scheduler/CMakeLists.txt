@@ -56,6 +56,8 @@ cc_library(
     :anthropic_adapter
     :anthropic_stream_encoder
     :chat_template
+    :deepseek_v4_cpp_chat_template
+    :model_type
     :common
     :etcd_client
     :loadbalance_policy
