@@ -22,6 +22,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "chat_template/chat_template.h"
 #include "common/types.h"
 #include "tokenizer/tokenizer_args.h"
 
@@ -80,12 +81,13 @@ struct Message {
   std::optional<ToolCallVec> tool_calls;
   std::string tool_call_id;
 };
-using ChatMessages = std::vector<Message>;
 
 // A chat template implementation that uses jinja2 as the template engine.
-class JinjaChatTemplate {
+class JinjaChatTemplate : public ChatTemplate {
  public:
   JinjaChatTemplate(const TokenizerArgs& args);
+
+  bool encode_add_special_tokens() const override { return true; }
 
   std::optional<std::string> apply(const ChatMessages& messages) const;
 
@@ -96,7 +98,7 @@ class JinjaChatTemplate {
   std::optional<std::string> apply(
       const ChatMessages& messages,
       const std::vector<xllm_service::JsonTool>& json_tools,
-      const nlohmann::ordered_json& chat_template_kwargs) const;
+      const nlohmann::ordered_json& chat_template_kwargs) const override;
 
   // expose this function for testing
   // apply the template to the values in the json object

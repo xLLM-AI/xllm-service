@@ -1,5 +1,4 @@
 /* Copyright 2025-2026 The xLLM Authors.
-Copyright 2024 The ScaleLLM Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,35 +14,33 @@ limitations under the License.
 ==============================================================================*/
 
 #pragma once
-#include <cstdint>
-#include <memory>
+
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "common/slice.h"
+#include "common/types.h"
 
 namespace xllm_service {
 
-class Tokenizer {
+struct Message;
+using ChatMessages = std::vector<Message>;
+
+// Abstract chat template: renders messages/tools into a prompt and declares
+// whether the resulting prompt already carries special tokens (so the tokenizer
+// knows whether to add them again).
+class ChatTemplate {
  public:
-  virtual ~Tokenizer() = default;
+  virtual ~ChatTemplate() = default;
 
-  virtual bool encode(const std::string_view& text,
-                      std::vector<int32_t>* ids,
-                      bool add_special_tokens = true) const = 0;
+  virtual std::optional<std::string> apply(
+      const ChatMessages& messages,
+      const std::vector<JsonTool>& json_tools,
+      const nlohmann::ordered_json& chat_template_kwargs) const = 0;
 
-  virtual std::string decode(const Slice<int32_t>& ids,
-                             bool skip_special_tokens) const = 0;
-
-  virtual std::optional<int32_t> token_to_id(
-      const std::string_view& token) const = 0;
-
-  virtual std::string id_to_token(int32_t id) const = 0;
-
-  virtual size_t vocab_size() const = 0;
-
-  virtual std::unique_ptr<Tokenizer> clone() const = 0;
+  // Whether tokenize should add special tokens for prompts from this template.
+  virtual bool encode_add_special_tokens() const = 0;
 };
 
 }  // namespace xllm_service

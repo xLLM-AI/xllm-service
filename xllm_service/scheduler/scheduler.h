@@ -15,6 +15,7 @@ limitations under the License.
 
 #pragma once
 
+#include "chat_template/chat_template.h"
 #include "chat_template/jinja_chat_template.h"
 #include "common/call_data.h"
 #include "common/options.h"
@@ -108,7 +109,7 @@ class Scheduler final {
   TokenizerArgs tokenizer_args_;
 
   // chat template instance
-  std::unique_ptr<JinjaChatTemplate> chat_template_;
+  std::unique_ptr<ChatTemplate> chat_template_;
 
   std::shared_ptr<EtcdClient> etcd_client_;
 

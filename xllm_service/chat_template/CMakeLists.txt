@@ -5,6 +5,7 @@ cc_library (
   NAME
     chat_template
   HDRS
+    chat_template.h
     jinja_chat_template.h
   SRCS
     jinja_chat_template.cpp

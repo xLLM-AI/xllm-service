@@ -140,7 +140,10 @@ bool Scheduler::schedule(std::shared_ptr<Request> request) {
 
   // encode prompt
   if (!is_vllm && request->prompt.size() != 0) {
-    if (!get_tls_tokenizer()->encode(request->prompt, &request->token_ids)) {
+    if (!get_tls_tokenizer()->encode(
+            request->prompt,
+            &request->token_ids,
+            chat_template_->encode_add_special_tokens())) {
       LOG(ERROR) << "Encode prompt failed: " << request->prompt;
       return false;
     }
