@@ -49,9 +49,8 @@ cc_library (
 )
 target_link_libraries(message_projection PUBLIC brpc-static leveldb::leveldb ZLIB::ZLIB protobuf::libprotobuf OpenSSL::SSL OpenSSL::Crypto)
 
-# Torch is a header-only dependency here: the upstream xllm::Message header
-# includes <torch/torch.h> but the V4 template references no torch symbols, so
-# we add only the torch include paths and never link libtorch.
+# Torch is header-only here: xllm::Message pulls in <torch/torch.h>, but the V4
+# template uses no torch symbols, so we add include paths without linking libtorch.
 set(TORCH_HEADER_INCLUDE_DIRS "" CACHE STRING "Torch header include dirs")
 if(NOT TORCH_HEADER_INCLUDE_DIRS)
   execute_process(

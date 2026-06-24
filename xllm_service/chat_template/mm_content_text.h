@@ -21,16 +21,11 @@ limitations under the License.
 
 namespace xllm_service {
 
-// Torch-free pure helpers over an ordered multimodal content vector. Kept in a
-// standalone header so both the proto projection and the V4 cpp wrapper can
-// reuse them without dragging in any xllm/torch headers.
+// Torch-free helpers over a multimodal content vector, in a standalone header so
+// callers can reuse them without pulling in xllm/torch headers.
 
-// Flattens an ordered content vector into a single text string: only `text`
-// blocks, joined by '\n'.
 std::string flat_text(const Message::MMContentVec& blocks);
 
-// Whether an ordered content vector must be kept structured (more than one
-// block, or a single non-text block).
 bool needs_content_vec(const Message::MMContentVec& blocks);
 
 }  // namespace xllm_service

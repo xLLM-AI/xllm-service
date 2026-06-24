@@ -45,9 +45,7 @@ Scheduler::Scheduler(const Options& options) : options_(options) {
     tokenizer_ = TokenizerFactory::create_tokenizer(options_.tokenizer_path(),
                                                     &tokenizer_args_);
 
-    // Pick the chat template from the model's config.json model_type. DeepSeek
-    // V4 has no jinja template and renders prompts (incl. special tokens) in
-    // C++; everything else (including a missing/unknown model_type) uses jinja.
+    // Select the chat template by config.json model_type (jinja by default).
     const auto model_type = load_model_type(options_.tokenizer_path());
     switch (select_chat_template_kind(model_type)) {
       case ChatTemplateKind::kDeepseekV4Cpp:

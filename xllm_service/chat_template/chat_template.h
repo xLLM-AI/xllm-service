@@ -27,9 +27,7 @@ namespace xllm_service {
 struct Message;
 using ChatMessages = std::vector<Message>;
 
-// Abstract chat template: renders messages/tools into a prompt and declares
-// whether the resulting prompt already carries special tokens (so the tokenizer
-// knows whether to add them again).
+// Renders messages/tools into a prompt.
 class ChatTemplate {
  public:
   virtual ~ChatTemplate() = default;
@@ -39,7 +37,7 @@ class ChatTemplate {
       const std::vector<JsonTool>& json_tools,
       const nlohmann::ordered_json& chat_template_kwargs) const = 0;
 
-  // Whether tokenize should add special tokens for prompts from this template.
+  // Whether the tokenizer should add special tokens when encoding the prompt.
   virtual bool encode_add_special_tokens() const = 0;
 };
 

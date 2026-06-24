@@ -23,9 +23,8 @@ limitations under the License.
 #include "framework/chat_template/deepseek_v4_cpp_template.h"
 #include "framework/tokenizer/tokenizer_args.h"
 
-// core/common/message.h pulls in <torch/torch.h>; this torch is built without
-// glog, so c10 defines its own LOG macro (needing libtorch's c10::MessageLogger).
-// We don't link libtorch, so restore glog's LOG macro for our own logging.
+// <torch/torch.h> (via message.h) defines c10's own LOG macro, but we don't link
+// libtorch. Restore glog's LOG macro for our logging.
 #include <glog/logging.h>
 #undef LOG
 #define LOG(severity) COMPACT_GOOGLE_LOG_##severity.stream()
@@ -33,8 +32,8 @@ limitations under the License.
 namespace xllm_service {
 namespace {
 
-// Projects the service TokenizerArgs onto the upstream one. The V4 template only
-// reads bos_token, but we copy the same-named string fields for completeness.
+// Copies the service TokenizerArgs onto the upstream one (V4 only reads
+// bos_token, but we copy all same-named string fields).
 xllm::TokenizerArgs to_xllm_tokenizer_args(const TokenizerArgs& args) {
   xllm::TokenizerArgs out;
   out.chat_template(args.chat_template());
@@ -48,8 +47,7 @@ xllm::TokenizerArgs to_xllm_tokenizer_args(const TokenizerArgs& args) {
 }
 
 xllm::Message to_xllm_message(const Message& msg) {
-  // Content: string passes through; a content vector is flattened to text
-  // because upstream get_text_content discards vector content.
+  // Flatten vector content to text; upstream get_text_content drops vectors.
   std::string content = std::holds_alternative<std::string>(msg.content)
                             ? std::get<std::string>(msg.content)
                             : flat_text(std::get<Message::MMContentVec>(

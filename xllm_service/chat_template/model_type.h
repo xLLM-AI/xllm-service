@@ -20,19 +20,14 @@ limitations under the License.
 
 namespace xllm_service {
 
-// Which chat template a model should use, decided from its model_type.
 enum class ChatTemplateKind {
   kJinja,
   kDeepseekV4Cpp,
 };
 
-// Maps a model_type to the chat template to use. Unknown / empty model_type
-// (including a missing config.json) falls back to jinja.
 ChatTemplateKind select_chat_template_kind(
     const std::optional<std::string>& model_type);
 
-// Reads the `model_type` field from `<model_weights_path>/config.json`.
-// Returns std::nullopt when config.json is missing or has no model_type field.
 std::optional<std::string> load_model_type(const std::string& model_weights_path);
 
 }  // namespace xllm_service

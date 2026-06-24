@@ -55,8 +55,7 @@ TEST(DeepseekV4CppChatTemplate, PlainTextMatchesUpstreamGolden) {
 TEST(DeepseekV4CppChatTemplate, MMContentVecIsFlattened) {
   DeepseekV4CppChatTemplate tmpl(make_v4_args());
 
-  // Two adjacent text blocks must be flattened (joined by '\n') so the upstream
-  // template (which discards vector content) renders them.
+  // Adjacent text blocks are flattened (joined by '\n') for the upstream template.
   Message::MMContentVec blocks{Message::MMContent("text", "first"),
                                Message::MMContent("text", "second")};
   ChatMessages messages{Message("user", blocks)};
@@ -108,8 +107,7 @@ TEST(DeepseekV4CppChatTemplate, ToolResultMergesViaToolCallId) {
   assistant.tool_calls = Message::ToolCallVec{call};
   messages.push_back(assistant);
 
-  // Non-empty tool_call_id drives tool-result merging; an empty one would be
-  // projected as an unset optional.
+  // Non-empty tool_call_id drives tool-result merging.
   Message tool_msg("tool", R"({"temperature":22})");
   tool_msg.tool_call_id = "call_001";
   messages.push_back(tool_msg);

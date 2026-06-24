@@ -23,8 +23,7 @@ limitations under the License.
 namespace xllm_service {
 namespace {
 
-// Writes `content` to <dir>/config.json under a fresh temp directory and
-// returns that directory. Caller need not clean up (temp dir per test).
+// Writes `content` to config.json in a fresh temp dir and returns that dir.
 std::string make_model_dir_with_config(const std::string& content) {
   const auto dir = std::filesystem::temp_directory_path() /
                    ("model_type_test_" +
