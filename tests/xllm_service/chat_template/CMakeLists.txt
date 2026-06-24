@@ -9,3 +9,33 @@ cc_test(
     :message_projection
     GTest::gtest_main
 )
+
+cc_test(
+  NAME
+    model_type_test
+  SRCS
+    model_type_test.cpp
+  DEPS
+    :model_type
+    GTest::gtest_main
+)
+
+cc_test(
+  NAME
+    chat_template_test
+  SRCS
+    jinja_chat_template_test.cpp
+  DEPS
+    :chat_template
+    GTest::gtest_main
+)
+
+cc_test(
+  NAME
+    deepseek_v4_cpp_chat_template_test
+  SRCS
+    deepseek_v4_cpp_chat_template_test.cpp
+  DEPS
+    :deepseek_v4_cpp_chat_template
+    GTest::gtest_main
+)

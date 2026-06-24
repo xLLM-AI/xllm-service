@@ -13,11 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jinja_chat_template.h"
+#include "chat_template/jinja_chat_template.h"
 
 #include <gtest/gtest.h>
 
+#include <memory>
+
+#include "chat_template/chat_template.h"
+
 namespace xllm_service {
+
+TEST(JinjaChatTemplate, EncodeAddsSpecialTokensViaBase) {
+  TokenizerArgs args;
+  args.chat_template("{{ messages[0]['content'] }}");
+  args.bos_token("");
+  args.eos_token("");
+
+  std::unique_ptr<ChatTemplate> tmpl = std::make_unique<JinjaChatTemplate>(args);
+  EXPECT_TRUE(tmpl->encode_add_special_tokens());
+}
 
 TEST(JinjaChatTemplate, OpenChatModel) {
   // clang-format off

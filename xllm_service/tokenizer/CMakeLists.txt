@@ -1,5 +1,4 @@
 include(cc_library)
-include(cc_test)
 
 add_subdirectory(tokenizers)
 

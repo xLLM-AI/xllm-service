@@ -1,5 +1,4 @@
 include(cc_library)
-include(cc_test)
 
 cc_library (
   NAME
@@ -87,13 +86,3 @@ cc_library (
     proto_xllm
 )
 target_link_libraries(deepseek_v4_cpp_chat_template PUBLIC brpc-static leveldb::leveldb ZLIB::ZLIB protobuf::libprotobuf OpenSSL::SSL OpenSSL::Crypto)
-
-cc_test (
-  NAME
-    chat_template_test
-  SRCS
-    jinja_chat_template_test.cpp
-  DEPS
-    :chat_template
-    GTest::gtest_main
-)
