@@ -157,6 +157,10 @@ bool Scheduler::schedule(std::shared_ptr<Request> request) {
 
   // encode prompt
   if (!is_vllm && request->prompt.size() != 0) {
+    if (chat_template_ == nullptr) {
+      LOG(ERROR) << "Chat template has not configured.";
+      return false;
+    }
     if (!get_tls_tokenizer()->encode(
             request->prompt,
             &request->token_ids,

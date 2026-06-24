@@ -129,7 +129,16 @@ bool SentencePieceTokenizer::encode_internal(const std::string_view& text,
 
 bool SentencePieceTokenizer::encode(const std::string_view& text,
                                     std::vector<int32_t>* ids,
-                                    bool /*add_special_tokens*/) const {
+                                    bool add_special_tokens) const {
+  // This tokenizer always prepends prefix tokens and cannot suppress special
+  // tokens; warn so callers (e.g. the V4 cpp template) that ask to skip them
+  // know the request is ignored and risk double-BOS.
+  if (!add_special_tokens) {
+    LOG_FIRST_N(WARNING, 1)
+        << "SentencePieceTokenizer ignores add_special_tokens=false; special "
+           "tokens are always added.";
+  }
+
   // prepend prefix tokens if exists
   if (!prefix_token_ids_.empty()) {
     ids->insert(
