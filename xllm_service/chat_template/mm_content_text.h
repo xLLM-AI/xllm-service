@@ -21,8 +21,8 @@ limitations under the License.
 
 namespace xllm_service {
 
-// Torch-free helpers over a multimodal content vector, in a standalone header so
-// callers can reuse them without pulling in xllm/torch headers.
+// Torch-free helpers over a multimodal content vector, in a standalone header
+// so callers can reuse them without pulling in xllm/torch headers.
 
 std::string flat_text(const Message::MMContentVec& blocks);
 

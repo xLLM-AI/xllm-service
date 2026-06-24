@@ -36,11 +36,8 @@ bool FastTokenizer::encode(const std::string_view& text,
                            std::vector<int32_t>* ids,
                            bool add_special_tokens) const {
   TokenizerEncodeResult result;
-  tokenizers_encode(handle_,
-                    text.data(),
-                    text.size(),
-                    add_special_tokens ? 1 : 0,
-                    &result);
+  tokenizers_encode(
+      handle_, text.data(), text.size(), add_special_tokens ? 1 : 0, &result);
 
   std::vector<int32_t> ret(result.token_ids, result.token_ids + result.len);
   *ids = std::move(ret);

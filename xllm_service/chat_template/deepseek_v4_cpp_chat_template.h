@@ -32,7 +32,8 @@ namespace xllm_service {
 
 // Renders DeepSeek V4 prompts via the upstream xllm::DeepseekV4CppTemplate; all
 // xllm/torch types are kept out of this header. The V4 template writes BOS/role
-// markers itself, so encode_add_special_tokens() is false to avoid a double BOS.
+// markers itself, so encode_add_special_tokens() is false to avoid a double
+// BOS.
 class DeepseekV4CppChatTemplate : public ChatTemplate {
  public:
   explicit DeepseekV4CppChatTemplate(const TokenizerArgs& args);

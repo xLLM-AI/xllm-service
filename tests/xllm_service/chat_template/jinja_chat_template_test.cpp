@@ -29,7 +29,8 @@ TEST(JinjaChatTemplate, EncodeAddsSpecialTokensViaBase) {
   args.bos_token("");
   args.eos_token("");
 
-  std::unique_ptr<ChatTemplate> tmpl = std::make_unique<JinjaChatTemplate>(args);
+  std::unique_ptr<ChatTemplate> tmpl =
+      std::make_unique<JinjaChatTemplate>(args);
   EXPECT_TRUE(tmpl->encode_add_special_tokens());
 }
 

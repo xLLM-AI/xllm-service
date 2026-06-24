@@ -48,7 +48,8 @@ TEST(SelectChatTemplateKind, MissingModelTypeFallsBackToJinja) {
 }
 
 TEST(LoadModelType, ReadsModelTypeFromConfigJson) {
-  const auto dir = make_model_dir_with_config(R"({"model_type": "deepseek_v4"})");
+  const auto dir =
+      make_model_dir_with_config(R"({"model_type": "deepseek_v4"})");
   EXPECT_EQ(load_model_type(dir), "deepseek_v4");
 }
 

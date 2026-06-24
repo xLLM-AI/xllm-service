@@ -28,6 +28,7 @@ enum class ChatTemplateKind {
 ChatTemplateKind select_chat_template_kind(
     const std::optional<std::string>& model_type);
 
-std::optional<std::string> load_model_type(const std::string& model_weights_path);
+std::optional<std::string> load_model_type(
+    const std::string& model_weights_path);
 
 }  // namespace xllm_service

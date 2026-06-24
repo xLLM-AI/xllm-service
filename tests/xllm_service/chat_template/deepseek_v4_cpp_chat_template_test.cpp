@@ -55,7 +55,8 @@ TEST(DeepseekV4CppChatTemplate, PlainTextMatchesUpstreamGolden) {
 TEST(DeepseekV4CppChatTemplate, MMContentVecIsFlattened) {
   DeepseekV4CppChatTemplate tmpl(make_v4_args());
 
-  // Adjacent text blocks are flattened (joined by '\n') for the upstream template.
+  // Adjacent text blocks are flattened (joined by '\n') for the upstream
+  // template.
   Message::MMContentVec blocks{Message::MMContent("text", "first"),
                                Message::MMContent("text", "second")};
   ChatMessages messages{Message("user", blocks)};
@@ -155,7 +156,8 @@ TEST(DeepseekV4CppChatTemplate, ThinkingKwargTogglesThinkBlock) {
             "<｜begin▁of▁sentence｜><｜User｜>Hello<｜Assistant｜><think>");
 
   // Default (no kwarg) closes thinking immediately.
-  auto thinking_off = tmpl.apply(messages, {}, nlohmann::ordered_json::object());
+  auto thinking_off =
+      tmpl.apply(messages, {}, nlohmann::ordered_json::object());
   ASSERT_TRUE(thinking_off.has_value());
   EXPECT_EQ(*thinking_off,
             "<｜begin▁of▁sentence｜><｜User｜>Hello<｜Assistant｜></think>");

@@ -23,8 +23,8 @@ limitations under the License.
 #include "framework/chat_template/deepseek_v4_cpp_template.h"
 #include "framework/tokenizer/tokenizer_args.h"
 
-// <torch/torch.h> (via message.h) defines c10's own LOG macro, but we don't link
-// libtorch. Restore glog's LOG macro for our logging.
+// <torch/torch.h> (via message.h) defines c10's own LOG macro, but we don't
+// link libtorch. Restore glog's LOG macro for our logging.
 #include <glog/logging.h>
 #undef LOG
 #define LOG(severity) COMPACT_GOOGLE_LOG_##severity.stream()
@@ -48,10 +48,10 @@ xllm::TokenizerArgs to_xllm_tokenizer_args(const TokenizerArgs& args) {
 
 xllm::Message to_xllm_message(const Message& msg) {
   // Flatten vector content to text; upstream get_text_content drops vectors.
-  std::string content = std::holds_alternative<std::string>(msg.content)
-                            ? std::get<std::string>(msg.content)
-                            : flat_text(std::get<Message::MMContentVec>(
-                                  msg.content));
+  std::string content =
+      std::holds_alternative<std::string>(msg.content)
+          ? std::get<std::string>(msg.content)
+          : flat_text(std::get<Message::MMContentVec>(msg.content));
   xllm::Message out(msg.role, content);
 
   if (msg.reasoning_content.has_value()) {
