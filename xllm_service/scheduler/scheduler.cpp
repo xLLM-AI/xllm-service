@@ -30,6 +30,7 @@ limitations under the License.
 
 namespace {
 constexpr int32_t kHeartbeatInterval = 3;  // in seconds
+constexpr int32_t kRegistrationMaxRetries = 5;
 
 constexpr const char* kEtcdUsernameEnvVar = "ETCD_USERNAME";
 constexpr const char* kEtcdPasswordEnvVar = "ETCD_PASSWORD";
@@ -214,10 +215,25 @@ bool Scheduler::register_current_service() {
     return true;
   }
 
-  LOG(ERROR) << "Service key already exists, registration failed: "
-             << service_key
-             << ". Please ensure service_name is unique across xllm_service "
-                "instances.";
+  // Key already exists — likely a stale lease from a previous process.
+  // Since the lease TTL is short (3 seconds), we can safely wait for it
+  // to expire naturally and retry registration without deleting the key.
+  LOG(WARNING) << "Service key already exists: " << service_key
+               << ". Waiting for the stale lease to expire and retrying.";
+
+  for (int attempt = 1; attempt <= kRegistrationMaxRetries; ++attempt) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    if (etcd_client_->set(
+            service_key, options_.service_name(), kHeartbeatInterval)) {
+      LOG(INFO) << "Service registered successfully on retry " << attempt;
+      return true;
+    }
+    LOG(WARNING) << "Registration retry " << attempt << " failed, "
+                 << "waiting for old lease to expire...";
+  }
+
+  LOG(ERROR) << "Registration failed after " << kRegistrationMaxRetries
+             << " retries: " << service_key;
   return false;
 }
 
