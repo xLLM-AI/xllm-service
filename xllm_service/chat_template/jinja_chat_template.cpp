@@ -18,6 +18,7 @@ limitations under the License.
 #include <glog/logging.h>
 #include <unistd.h>
 
+#include <cctype>
 #include <optional>
 #include <string>
 #include <vector>
@@ -128,12 +129,129 @@ nlohmann::ordered_json with_thinking_fallback(
   return fallback;
 }
 
+enum class JinjaBlock { kText, kExpression, kStatement, kComment };
+
+bool is_numeric_member_prefix(char c) {
+  return std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == ')' ||
+         c == ']';
+}
+
+bool is_identifier_char(char c) {
+  return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+}
+
+std::string normalize_glm52_jinja_syntax(const std::string& tmpl) {
+  std::string normalized;
+  normalized.reserve(tmpl.size());
+
+  JinjaBlock block = JinjaBlock::kText;
+  char quote = '\0';
+  size_t i = 0;
+  while (i < tmpl.size()) {
+    if (block == JinjaBlock::kText && i + 1 < tmpl.size() && tmpl[i] == '{') {
+      if (tmpl[i + 1] == '{') {
+        block = JinjaBlock::kExpression;
+      } else if (tmpl[i + 1] == '%') {
+        block = JinjaBlock::kStatement;
+      } else if (tmpl[i + 1] == '#') {
+        block = JinjaBlock::kComment;
+      } else {
+        normalized.push_back(tmpl[i++]);
+        continue;
+      }
+      normalized.append(tmpl, i, 2);
+      i += 2;
+      continue;
+    }
+
+    if (block == JinjaBlock::kComment) {
+      if (i + 1 < tmpl.size() && tmpl[i] == '#' && tmpl[i + 1] == '}') {
+        normalized.append(tmpl, i, 2);
+        i += 2;
+        block = JinjaBlock::kText;
+      } else {
+        normalized.push_back(tmpl[i++]);
+      }
+      continue;
+    }
+
+    if (block == JinjaBlock::kExpression || block == JinjaBlock::kStatement) {
+      const char close = block == JinjaBlock::kExpression ? '}' : '%';
+      if (quote == '\0' && i + 1 < tmpl.size() && tmpl[i] == close &&
+          tmpl[i + 1] == '}') {
+        normalized.append(tmpl, i, 2);
+        i += 2;
+        block = JinjaBlock::kText;
+        continue;
+      }
+
+      if (quote != '\0') {
+        normalized.push_back(tmpl[i]);
+        if (tmpl[i] == '\\' && i + 1 < tmpl.size()) {
+          normalized.push_back(tmpl[i + 1]);
+          i += 2;
+          continue;
+        }
+        if (tmpl[i] == quote) {
+          quote = '\0';
+        }
+        ++i;
+        continue;
+      }
+
+      if (tmpl[i] == '\'' || tmpl[i] == '"') {
+        quote = tmpl[i];
+        normalized.push_back(tmpl[i++]);
+        continue;
+      }
+
+      if (tmpl[i] == '.' && !normalized.empty() &&
+          is_numeric_member_prefix(normalized.back()) && i + 1 < tmpl.size() &&
+          std::isdigit(static_cast<unsigned char>(tmpl[i + 1]))) {
+        size_t end = i + 1;
+        while (end < tmpl.size() &&
+               std::isdigit(static_cast<unsigned char>(tmpl[end]))) {
+          ++end;
+        }
+        normalized.push_back('[');
+        normalized.append(tmpl, i + 1, end - i - 1);
+        normalized.push_back(']');
+        i = end;
+        continue;
+      }
+
+      if (tmpl[i] == '|') {
+        size_t filter = i + 1;
+        while (filter < tmpl.size() &&
+               std::isspace(static_cast<unsigned char>(tmpl[filter]))) {
+          ++filter;
+        }
+        constexpr char kCapitalize[] = "capitalize";
+        constexpr size_t kCapitalizeLength = sizeof(kCapitalize) - 1;
+        if (tmpl.compare(filter, kCapitalizeLength, kCapitalize) == 0 &&
+            (filter + kCapitalizeLength == tmpl.size() ||
+             !is_identifier_char(tmpl[filter + kCapitalizeLength]))) {
+          normalized.append(".capitalize()");
+          i = filter + kCapitalizeLength;
+          continue;
+        }
+      }
+    }
+
+    normalized.push_back(tmpl[i++]);
+  }
+
+  return normalized;
+}
+
 }  // namespace
 
 JinjaChatTemplate::JinjaChatTemplate(const TokenizerArgs& args) : args_(args) {
   try {
     template_ = std::make_unique<minja::chat_template>(
-        args_.chat_template(), args_.bos_token(), args_.eos_token());
+        normalize_glm52_jinja_syntax(args_.chat_template()),
+        args_.bos_token(),
+        args_.eos_token());
     LOG(INFO) << "Jinja chat template init succeed.";
 
   } catch (const std::exception& e) {
