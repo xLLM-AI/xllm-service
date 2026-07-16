@@ -49,6 +49,31 @@ size_t find_tool_start(const std::string& text) {
   return pos;
 }
 
+// GLM-family control markers that may leak into the streamed output when
+// skip_special_tokens is disabled for tool calling (e.g. the model emits
+// <|observation|> right after </tool_call>). They carry no visible content.
+// The non-stream path already drops trailing text after tool calls, so this
+// keeps the streaming behavior consistent and prevents these markers from
+// reaching the client.
+void strip_special_control_tokens(std::string* text) {
+  if (!text || text->empty()) {
+    return;
+  }
+  static const std::vector<std::string> kControlTokens = {
+      "<|observation|>",
+      "<|user|>",
+      "<|assistant|>",
+      "<|system|>",
+      "<|endoftext|>",
+  };
+  for (const auto& token : kControlTokens) {
+    size_t pos = 0;
+    while ((pos = text->find(token, pos)) != std::string::npos) {
+      text->erase(pos, token.length());
+    }
+  }
+}
+
 AnthropicTracer make_anthropic_tracer(
     const std::shared_ptr<AnthropicCallData>& call_data) {
   return AnthropicTracer(
@@ -89,7 +114,9 @@ bool send_normal_text_chunk(std::shared_ptr<ChatCallData> call_data,
                             const std::string& request_id,
                             int64_t created_time,
                             const std::string& model) {
-  if (content.empty()) {
+  std::string filtered_content = content;
+  strip_special_control_tokens(&filtered_content);
+  if (filtered_content.empty()) {
     return true;
   }
 
@@ -102,7 +129,7 @@ bool send_normal_text_chunk(std::shared_ptr<ChatCallData> call_data,
   auto* choice = response.add_choices();
   choice->set_index(index);
   auto* delta = choice->mutable_delta();
-  delta->set_content(content);
+  delta->set_content(filtered_content);
   return call_data->write(response);
 }
 
@@ -303,18 +330,21 @@ bool ResponseHandler::send_delta_to_client(
           return false;
         }
       } else {
-        response.Clear();
-        response.set_object("chat.completion.chunk");
-        response.set_id(request_id);
-        response.set_created(created_time);
-        response.set_model(model);
-        auto* choice = response.add_choices();
-        choice->set_index(index);
-        set_logprobs(choice, seq_output.logprobs);
-        auto* message = choice->mutable_delta();
-        message->set_content(cur_text);
-        if (!call_data->write(response)) {
-          return false;
+        strip_special_control_tokens(&cur_text);
+        if (!cur_text.empty()) {
+          response.Clear();
+          response.set_object("chat.completion.chunk");
+          response.set_id(request_id);
+          response.set_created(created_time);
+          response.set_model(model);
+          auto* choice = response.add_choices();
+          choice->set_index(index);
+          set_logprobs(choice, seq_output.logprobs);
+          auto* message = choice->mutable_delta();
+          message->set_content(cur_text);
+          if (!call_data->write(response)) {
+            return false;
+          }
         }
       }
     }
@@ -515,7 +545,12 @@ bool ResponseHandler::send_delta_to_client(
     };
 
     auto emit_text = [&](const std::string& text) -> bool {
-      auto result = encoder.on_text(output, text, &sse_events);
+      std::string filtered = text;
+      strip_special_control_tokens(&filtered);
+      if (filtered.empty()) {
+        return true;
+      }
+      auto result = encoder.on_text(output, filtered, &sse_events);
       if (!result.ok) {
         return call_data->finish_with_error(result.error);
       }
@@ -701,6 +736,7 @@ bool ResponseHandler::send_result_to_client(
                                       reasoning_parser,
                                       force_reasoning,
                                       response.GetArena());
+      strip_special_control_tokens(&result.text);
       message->set_content(result.text);
       if (result.reasoning_content.has_value()) {
         message->set_reasoning_content(result.reasoning_content.value());

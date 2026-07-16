@@ -184,12 +184,36 @@ std::optional<std::string> JinjaChatTemplate::apply(
     if (message.tool_calls.has_value()) {
       nlohmann::ordered_json tool_calls_json = nlohmann::json::array();
       for (const auto& tool_call : *message.tool_calls) {
+        // Tool-call arguments arrive as a JSON string (OpenAI wire format), but
+        // chat templates such as GLM iterate `arguments.items()`, which only
+        // works on a JSON object. A non-object value (truncated/malformed JSON,
+        // or a JSON array/scalar) makes minja throw "Unknown method: items",
+        // which would abort the whole process. Always hand the template an
+        // object: parse when possible and fall back to an empty object
+        // otherwise, so rendering can never throw on this field.
+        nlohmann::ordered_json arguments_json = nlohmann::ordered_json::object();
+        if (!tool_call.function.arguments.empty()) {
+          try {
+            auto parsed = nlohmann::json::parse(tool_call.function.arguments);
+            if (parsed.is_object()) {
+              arguments_json = std::move(parsed);
+            } else {
+              LOG(WARNING) << "Tool-call arguments are not a JSON object, "
+                              "rendering empty args: "
+                           << tool_call.function.arguments;
+            }
+          } catch (const nlohmann::json::exception& e) {
+            LOG(WARNING) << "Failed to parse tool-call arguments, rendering "
+                            "empty args: "
+                         << e.what();
+          }
+        }
         tool_calls_json.emplace_back(nlohmann::ordered_json{
             {"id", tool_call.id},
             {"type", tool_call.type},
             {"function",
              {{"name", tool_call.function.name},
-              {"arguments", tool_call.function.arguments}}}});
+              {"arguments", std::move(arguments_json)}}}});
       }
       message_json["tool_calls"] = std::move(tool_calls_json);
     }
@@ -249,7 +273,18 @@ std::optional<std::string> JinjaChatTemplate::apply(
   input.extra_context = chat_template_kwargs;
   minja::chat_template_options options;
 
-  return template_->apply(input, options);
+  // minja throws std::runtime_error on any rendering failure (e.g. calling
+  // `.items()` on a non-object value). The OpenAI HTTP path does not wrap the
+  // scheduler call in a try/catch, so an uncaught exception here would escape
+  // the brpc handler and terminate the whole process. Contain it and degrade
+  // to an empty result, letting callers report a normal "failed to construct
+  // prompt" error instead of crashing.
+  try {
+    return template_->apply(input, options);
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "Failed to apply chat template: " << e.what();
+    return std::nullopt;
+  }
 }
 
 nlohmann::ordered_json JinjaChatTemplate::get_mm_content(

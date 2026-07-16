@@ -299,18 +299,28 @@ constexpr char kInferContentLength[] = "Infer-Content-Length";
 constexpr char kContentLength[] = "Content-Length";
 
 size_t GetJsonContentLength(const brpc::Controller* ctrl) {
+  const auto parse_length = [](const std::string& value) -> size_t {
+    try {
+      return std::stoul(value);
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Invalid Content-Length value: " << value
+                 << ", error: " << e.what();
+      return (size_t)-1L;
+    }
+  };
+
   const auto infer_content_len =
       ctrl->http_request().GetHeader(kInferContentLength);
   if (infer_content_len != nullptr) {
-    return std::stoul(*infer_content_len);
+    return parse_length(*infer_content_len);
   }
 
   const auto content_len = ctrl->http_request().GetHeader(kContentLength);
   if (content_len != nullptr) {
-    return std::stoul(*content_len);
+    return parse_length(*content_len);
   }
 
-  LOG(FATAL) << "Content-Length header is missing.";
+  LOG(ERROR) << "Content-Length header is missing.";
   return (size_t)-1L;
 }
 
@@ -569,6 +579,10 @@ void XllmHttpServiceImpl::ChatCompletions(
           arena);
 
   auto content_len = GetJsonContentLength(cntl);
+  if (content_len == (size_t)-1L) {
+    cntl->SetFailed("Content-Length header is missing or invalid.");
+    return;
+  }
   std::string attachment;
   cntl->request_attachment().copy_to(&attachment, content_len, 0);
 
@@ -594,7 +608,28 @@ void XllmHttpServiceImpl::ChatCompletions(
   if (req_pb->messages_size() > 0) {
     service_request->messages.reserve(req_pb->messages_size());
     for (const auto& message : req_pb->messages()) {
-      service_request->messages.emplace_back(message.role(), message.content());
+      Message msg(message.role(), message.content());
+      if (message.has_reasoning_content()) {
+        msg.reasoning_content = message.reasoning_content();
+      }
+      if (!message.tool_call_id().empty()) {
+        msg.tool_call_id = message.tool_call_id();
+      }
+      if (message.tool_calls_size() > 0) {
+        Message::ToolCallVec tool_calls;
+        tool_calls.reserve(message.tool_calls_size());
+        for (const auto& tool_call : message.tool_calls()) {
+          Message::ToolCall parsed_tool_call;
+          parsed_tool_call.id = tool_call.id();
+          parsed_tool_call.type = tool_call.type();
+          parsed_tool_call.function.name = tool_call.function().name();
+          parsed_tool_call.function.arguments =
+              tool_call.function().arguments();
+          tool_calls.emplace_back(std::move(parsed_tool_call));
+        }
+        msg.tool_calls = std::move(tool_calls);
+      }
+      service_request->messages.emplace_back(std::move(msg));
     }
     if (req_pb->has_chat_template_kwargs()) {
       service_request->chat_template_kwargs =
@@ -670,6 +705,10 @@ void XllmHttpServiceImpl::AnthropicMessages(
       ::xllm::proto::AnthropicMessagesResponse>(arena);
 
   auto content_len = GetJsonContentLength(cntl);
+  if (content_len == (size_t)-1L) {
+    cntl->SetFailed("Content-Length header is missing or invalid.");
+    return;
+  }
   std::string attachment;
   cntl->request_attachment().copy_to(&attachment, content_len, 0);
 

@@ -97,7 +97,7 @@ class StreamCallData : public CallData {
 
     } else {
       controller_->http_response().SetHeader("Content-Type",
-                                             "text/javascript; charset=utf-8");
+                                             "application/json; charset=utf-8");
     }
 
     json_options_.bytes_to_base64 = false;
