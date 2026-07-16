@@ -191,7 +191,8 @@ std::optional<std::string> JinjaChatTemplate::apply(
         // which would abort the whole process. Always hand the template an
         // object: parse when possible and fall back to an empty object
         // otherwise, so rendering can never throw on this field.
-        nlohmann::ordered_json arguments_json = nlohmann::ordered_json::object();
+        nlohmann::ordered_json arguments_json =
+            nlohmann::ordered_json::object();
         if (!tool_call.function.arguments.empty()) {
           try {
             auto parsed = nlohmann::json::parse(tool_call.function.arguments);
