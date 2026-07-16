@@ -68,6 +68,43 @@ TEST(JinjaChatTemplate, OpenChatModel) {
   EXPECT_EQ(result.value(), expected);
 }
 
+TEST(JinjaChatTemplate, RendersGlm52JinjaSyntax) {
+  const std::string template_str =
+      "{{ messages.0.role }}: {{ messages.0.content | capitalize }}";
+
+  nlohmann::ordered_json messages = {
+      {{"role", "user"}, {"content", "hello world"}}};
+
+  TokenizerArgs args;
+  args.chat_template(template_str);
+  args.bos_token("");
+  args.eos_token("");
+  JinjaChatTemplate template_(args);
+
+  auto result = template_.apply(messages);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result.value(), "user: Hello world");
+}
+
+TEST(JinjaChatTemplate, PreservesJinjaSyntaxInStringLiterals) {
+  const std::string template_str =
+      "{{ 'release.2 | capitalize' }}|"
+      "{{ messages.0.content | capitalize }}";
+
+  nlohmann::ordered_json messages = {
+      {{"role", "user"}, {"content", "hello world"}}};
+
+  TokenizerArgs args;
+  args.chat_template(template_str);
+  args.bos_token("");
+  args.eos_token("");
+  JinjaChatTemplate template_(args);
+
+  auto result = template_.apply(messages);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result.value(), "release.2 | capitalize|Hello world");
+}
+
 TEST(JinjaChatTemplate, ApplyChatTemplateKwargs) {
   const std::string template_str =
       "{% if enable_thinking %}<think>{% endif %}"
