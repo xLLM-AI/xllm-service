@@ -26,6 +26,19 @@ limitations under the License.
 #include "xllm/xllm/function_call/function_call_parser.h"
 
 namespace xllm_service {
+
+void set_openai_usage(xllm::proto::Usage* proto_usage,
+                      const llm::Usage& usage) {
+  CHECK(proto_usage != nullptr);
+  proto_usage->set_prompt_tokens(static_cast<int32_t>(usage.num_prompt_tokens));
+  proto_usage->set_completion_tokens(
+      static_cast<int32_t>(usage.num_generated_tokens));
+  proto_usage->set_total_tokens(static_cast<int32_t>(usage.num_total_tokens));
+  auto* prompt_tokens_details = proto_usage->mutable_prompt_tokens_details();
+  prompt_tokens_details->set_cached_tokens(
+      static_cast<int32_t>(usage.num_cached_tokens));
+}
+
 namespace {
 
 size_t find_tool_start(const std::string& text) {
@@ -395,12 +408,7 @@ bool ResponseHandler::send_delta_to_client(
     response.set_id(request_id);
     response.set_created(created_time);
     response.set_model(model);
-    auto* proto_usage = response.mutable_usage();
-    proto_usage->set_prompt_tokens(
-        static_cast<int32_t>(usage.num_prompt_tokens));
-    proto_usage->set_completion_tokens(
-        static_cast<int32_t>(usage.num_generated_tokens));
-    proto_usage->set_total_tokens(static_cast<int32_t>(usage.num_total_tokens));
+    set_openai_usage(response.mutable_usage(), usage);
     if (!call_data->write(response)) {
       return false;
     }
@@ -476,12 +484,7 @@ bool ResponseHandler::send_delta_to_client(
     response.set_created(created_time);
     response.set_model(model);
     response.mutable_choices();
-    auto* proto_usage = response.mutable_usage();
-    proto_usage->set_prompt_tokens(
-        static_cast<int32_t>(usage.num_prompt_tokens));
-    proto_usage->set_completion_tokens(
-        static_cast<int32_t>(usage.num_generated_tokens));
-    proto_usage->set_total_tokens(static_cast<int32_t>(usage.num_total_tokens));
+    set_openai_usage(response.mutable_usage(), usage);
     if (!call_data->write(response)) {
       return false;
     }
@@ -761,12 +764,7 @@ bool ResponseHandler::send_result_to_client(
   // add usage statistics
   if (req_output.usage.has_value()) {
     const auto& usage = req_output.usage.value();
-    auto* proto_usage = response.mutable_usage();
-    proto_usage->set_prompt_tokens(
-        static_cast<int32_t>(usage.num_prompt_tokens));
-    proto_usage->set_completion_tokens(
-        static_cast<int32_t>(usage.num_generated_tokens));
-    proto_usage->set_total_tokens(static_cast<int32_t>(usage.num_total_tokens));
+    set_openai_usage(response.mutable_usage(), usage);
   }
 
   return call_data->write_and_finish(response);
@@ -809,12 +807,7 @@ bool ResponseHandler::send_result_to_client(
   // add usage statistics
   if (req_output.usage.has_value()) {
     const auto& usage = req_output.usage.value();
-    auto* proto_usage = response.mutable_usage();
-    proto_usage->set_prompt_tokens(
-        static_cast<int32_t>(usage.num_prompt_tokens));
-    proto_usage->set_completion_tokens(
-        static_cast<int32_t>(usage.num_generated_tokens));
-    proto_usage->set_total_tokens(static_cast<int32_t>(usage.num_total_tokens));
+    set_openai_usage(response.mutable_usage(), usage);
   }
 
   return call_data->write_and_finish(response);
