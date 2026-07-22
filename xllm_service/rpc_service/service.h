@@ -31,6 +31,9 @@ namespace xllm_service {
 class Scheduler;
 class InstanceMgr;
 
+llm::RequestOutput make_request_output(
+    const proto::DisaggStreamGeneration& request);
+
 class XllmRpcServiceImpl final {
  public:
   XllmRpcServiceImpl(const Options& options, Scheduler* scheduler);

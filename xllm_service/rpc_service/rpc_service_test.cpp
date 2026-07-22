@@ -26,6 +26,28 @@ class XllmRpcServiceTest : public ::testing::Test {
 
   void TearDown() override { google::ShutdownGoogleLogging(); }
 };
+
+TEST_F(XllmRpcServiceTest, OutputUsageUsesFieldFourForCachedTokens) {
+  const google::protobuf::FieldDescriptor* field =
+      proto::OutputUsage::descriptor()->FindFieldByName("num_cached_tokens");
+
+  ASSERT_NE(field, nullptr);
+  EXPECT_EQ(field->number(), 4);
+}
+
+TEST_F(XllmRpcServiceTest, ConvertsCachedTokensIntoInternalUsage) {
+  proto::DisaggStreamGeneration generation;
+  generation.mutable_usage()->set_num_prompt_tokens(8);
+  generation.mutable_usage()->set_num_generated_tokens(2);
+  generation.mutable_usage()->set_num_total_tokens(10);
+  generation.mutable_usage()->set_num_cached_tokens(6);
+
+  llm::RequestOutput output = make_request_output(generation);
+
+  ASSERT_TRUE(output.usage.has_value());
+  EXPECT_EQ(output.usage->num_cached_tokens, 6u);
+}
+
 // TODO
 // TEST_F(XllmRpcServiceTest, RegisterInstance) {
 //   RpcServiceConfig config;
