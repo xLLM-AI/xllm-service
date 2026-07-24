@@ -26,6 +26,68 @@ limitations under the License.
 
 namespace xllm_service {
 
+llm::RequestOutput make_request_output(
+    const proto::DisaggStreamGeneration& request) {
+  llm::RequestOutput request_output;
+  request_output.request_id = request.req_id();
+  request_output.service_request_id = request.service_req_id();
+  if (request.has_gen_status()) {
+    request_output.status = llm::Status(
+        static_cast<llm::StatusCode>(request.gen_status().status_code()),
+        request.gen_status().status_msg());
+  }
+  if (request.has_usage()) {
+    llm::Usage usage;
+    usage.num_prompt_tokens = request.usage().num_prompt_tokens();
+    usage.num_generated_tokens = request.usage().num_generated_tokens();
+    usage.num_total_tokens = request.usage().num_total_tokens();
+    usage.num_cached_tokens = request.usage().num_cached_tokens();
+    request_output.usage = std::move(usage);
+  }
+  request_output.finished_on_prefill_instance =
+      request.finished_on_prefill_instance();
+  request_output.finished = request.finished();
+  request_output.outputs.reserve(request.outputs_size());
+  for (const auto& output : request.outputs()) {
+    llm::SequenceOutput sequence_output;
+    sequence_output.index = output.index();
+    sequence_output.text = output.text();
+    sequence_output.token_ids = std::vector<int32_t>(output.token_ids().begin(),
+                                                     output.token_ids().end());
+    if (!output.finish_reason().empty()) {
+      sequence_output.finish_reason = output.finish_reason();
+    }
+    if (!output.logprobs().empty()) {
+      std::vector<llm::LogProb> logprobs;
+      logprobs.reserve(output.logprobs_size());
+      for (const auto& logprob : output.logprobs()) {
+        llm::LogProb lp;
+        lp.token = logprob.log_prob_data().token();
+        lp.token_id = logprob.log_prob_data().token_id();
+        lp.logprob = logprob.log_prob_data().logprob();
+        lp.finished_token = logprob.log_prob_data().finished_token();
+        if (!logprob.top_logprobs().empty()) {
+          std::vector<llm::LogProbData> top_logprobs;
+          top_logprobs.reserve(logprob.top_logprobs_size());
+          for (const auto& top_logprob : logprob.top_logprobs()) {
+            llm::LogProbData lpd;
+            lpd.token = top_logprob.token();
+            lpd.token_id = top_logprob.token_id();
+            lpd.logprob = top_logprob.logprob();
+            lpd.finished_token = top_logprob.finished_token();
+            top_logprobs.emplace_back(std::move(lpd));
+          }
+          lp.top_logprobs = std::move(top_logprobs);
+        }
+        logprobs.emplace_back(std::move(lp));
+      }
+      sequence_output.logprobs = std::move(logprobs);
+    }
+    request_output.outputs.emplace_back(std::move(sequence_output));
+  }
+  return request_output;
+}
+
 XllmRpcServiceImpl::XllmRpcServiceImpl(const Options& options,
                                        Scheduler* scheduler)
     : options_(options), scheduler_(scheduler) {}
@@ -145,61 +207,8 @@ void XllmRpcService::Generations(google::protobuf::RpcController* cntl_base,
   brpc::ClosureGuard done_guard(done);
 
   // TODO: use threadpool here
-  for (auto& request : req->gens()) {
-    // convert proto request to `RequestOutput`
-    llm::RequestOutput request_output;
-    request_output.request_id = request.req_id();
-    request_output.service_request_id = request.service_req_id();
-    if (request.has_gen_status()) {
-      request_output.status = llm::Status(
-          static_cast<llm::StatusCode>(request.gen_status().status_code()),
-          request.gen_status().status_msg());
-    }
-    if (request.has_usage()) {
-      llm::Usage u;
-      u.num_prompt_tokens = request.usage().num_prompt_tokens();
-      u.num_generated_tokens = request.usage().num_generated_tokens();
-      u.num_total_tokens = request.usage().num_total_tokens();
-      request_output.usage = std::move(u);
-    }
-    request_output.finished_on_prefill_instance =
-        request.finished_on_prefill_instance();
-    request_output.finished = request.finished();
-    for (auto& output : request.outputs()) {
-      llm::SequenceOutput sequence_output;
-      sequence_output.index = output.index();
-      sequence_output.text = output.text();
-      sequence_output.token_ids = std::vector<int32_t>(
-          output.token_ids().begin(), output.token_ids().end());
-      if (!output.finish_reason().empty()) {
-        sequence_output.finish_reason = output.finish_reason();
-      }
-      if (output.logprobs().size() > 0) {
-        std::vector<llm::LogProb> logprobs;
-        for (auto& logprob : output.logprobs()) {
-          llm::LogProb lp;
-          lp.token = logprob.log_prob_data().token();
-          lp.token_id = logprob.log_prob_data().token_id();
-          lp.logprob = logprob.log_prob_data().logprob();
-          lp.finished_token = logprob.log_prob_data().finished_token();
-          if (logprob.top_logprobs().size() > 0) {
-            std::vector<llm::LogProbData> top_logprobs;
-            for (auto& top_logprob : logprob.top_logprobs()) {
-              llm::LogProbData lpd;
-              lpd.token = top_logprob.token();
-              lpd.token_id = top_logprob.token_id();
-              lpd.logprob = top_logprob.logprob();
-              lpd.finished_token = top_logprob.finished_token();
-              top_logprobs.emplace_back(std::move(lpd));
-            }
-            lp.top_logprobs = std::move(top_logprobs);
-          }
-          logprobs.emplace_back(std::move(lp));
-        }
-        sequence_output.logprobs = std::move(logprobs);
-      }
-      request_output.outputs.emplace_back(std::move(sequence_output));
-    }
+  for (const auto& request : req->gens()) {
+    llm::RequestOutput request_output = make_request_output(request);
 
     resp->mutable_all_status()->Add()->set_ok(
         xllm_rpc_service_impl_->handle_generation(request_output));

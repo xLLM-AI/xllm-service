@@ -807,6 +807,7 @@ TEST(AnthropicAdapterTest, BuildsNonStreamAnthropicJson) {
   usage.num_prompt_tokens = 3;
   usage.num_generated_tokens = 4;
   usage.num_total_tokens = 7;
+  usage.num_cached_tokens = 2;
   output.usage = usage;
 
   xllm::proto::AnthropicMessagesResponse response;
@@ -826,9 +827,33 @@ TEST(AnthropicAdapterTest, BuildsNonStreamAnthropicJson) {
   ASSERT_EQ(json["content"].size(), 1);
   EXPECT_EQ(json["content"][0]["type"], "text");
   EXPECT_EQ(json["content"][0]["text"], "answer");
-  EXPECT_EQ(json["usage"]["input_tokens"], 3);
+  EXPECT_EQ(json["usage"]["input_tokens"], 1);
   EXPECT_EQ(json["usage"]["output_tokens"], 4);
+  EXPECT_EQ(json["usage"]["cache_read_input_tokens"], 2);
+  EXPECT_FALSE(json["usage"].contains("cache_creation_input_tokens"));
   EXPECT_FALSE(json["usage"].contains("total_tokens"));
+}
+
+TEST(AnthropicAdapterTest, BuildsZeroCacheReadUsage) {
+  llm::RequestOutput output;
+  output.request_id = "anthropiccmpl-test";
+  llm::Usage usage;
+  usage.num_prompt_tokens = 3;
+  output.usage = usage;
+
+  xllm::proto::AnthropicMessagesResponse response;
+  auto result = fill_anthropic_resp("test-model", output, &response);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  std::string json_str;
+  std::string error;
+  ASSERT_TRUE(anthropic_json(response, &json_str, &error)) << error;
+  auto json = nlohmann::json::parse(json_str);
+
+  ASSERT_TRUE(json["usage"].contains("cache_read_input_tokens"));
+  EXPECT_EQ(json["usage"]["input_tokens"], 3);
+  EXPECT_EQ(json["usage"]["cache_read_input_tokens"], 0);
+  EXPECT_FALSE(json["usage"].contains("cache_creation_input_tokens"));
 }
 
 TEST(AnthropicAdapterTest, BuildsThinkingNonStreamAnthropicJson) {

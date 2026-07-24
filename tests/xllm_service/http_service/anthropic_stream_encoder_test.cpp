@@ -243,6 +243,7 @@ TEST(AnthropicStreamEncoderTest, FinishClosesBlockAndEmitsMessageDeltaStop) {
   llm::Usage usage;
   usage.num_prompt_tokens = 3;
   usage.num_generated_tokens = 5;
+  usage.num_cached_tokens = 2;
   final.usage = usage;
 
   std::vector<std::string> done;
@@ -254,8 +255,9 @@ TEST(AnthropicStreamEncoderTest, FinishClosesBlockAndEmitsMessageDeltaStop) {
   EXPECT_EQ(events[0]["index"], 0);
   EXPECT_EQ(events[1]["type"], "message_delta");
   EXPECT_EQ(events[1]["delta"]["stop_reason"], "end_turn");
-  EXPECT_EQ(events[1]["usage"]["input_tokens"], 3);
+  EXPECT_EQ(events[1]["usage"]["input_tokens"], 1);
   EXPECT_EQ(events[1]["usage"]["output_tokens"], 5);
+  EXPECT_EQ(events[1]["usage"]["cache_read_input_tokens"], 2);
   EXPECT_EQ(events[2]["type"], "message_stop");
 }
 
@@ -273,6 +275,9 @@ TEST(AnthropicStreamEncoderTest, FinishAfterToolUsesToolStopReason) {
   seq.index = 0;
   seq.finish_reason = "stop";
   final.outputs.push_back(std::move(seq));
+  llm::Usage usage;
+  usage.num_prompt_tokens = 3;
+  final.usage = usage;
 
   std::vector<std::string> done;
   ASSERT_TRUE(encoder.finish(final, &done).ok);
@@ -281,6 +286,10 @@ TEST(AnthropicStreamEncoderTest, FinishAfterToolUsesToolStopReason) {
   EXPECT_EQ(events[0]["type"], "content_block_stop");
   EXPECT_EQ(events[1]["type"], "message_delta");
   EXPECT_EQ(events[1]["delta"]["stop_reason"], "tool_use");
+  ASSERT_TRUE(events[1]["usage"].contains("cache_read_input_tokens"));
+  EXPECT_EQ(events[1]["usage"]["input_tokens"], 3);
+  EXPECT_EQ(events[1]["usage"]["cache_read_input_tokens"], 0);
+  EXPECT_FALSE(events[1]["usage"].contains("cache_creation_input_tokens"));
   EXPECT_EQ(events[2]["type"], "message_stop");
 }
 
