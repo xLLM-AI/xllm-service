@@ -37,8 +37,7 @@ proto::DisaggStreamGeneration make_generation(int32_t num_prompt_tokens,
   return generation;
 }
 
-TEST(DisaggGenerationAdapterTest,
-     PrefixCacheHitTokensRemainWireCompatibleAtFieldFour) {
+TEST(DisaggGenerationAdapterTest, CachedTokensRemainWireCompatibleAtFieldFour) {
   const google::protobuf::FieldDescriptor* sender_field =
       xllm::proto::OutputUsage::descriptor()->FindFieldByName(
           "num_cached_tokens");

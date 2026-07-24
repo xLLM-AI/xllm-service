@@ -1,5 +1,6 @@
 add_subdirectory(chat_template)
 add_subdirectory(common)
 add_subdirectory(http_service)
+add_subdirectory(rpc_service)
 add_subdirectory(scheduler)
 add_subdirectory(tokenizer)
