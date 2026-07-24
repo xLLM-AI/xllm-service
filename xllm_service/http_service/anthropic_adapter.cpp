@@ -18,6 +18,7 @@ limitations under the License.
 #include <google/protobuf/util/json_util.h>
 #include <json2pb/pb_to_json.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -32,6 +33,19 @@ limitations under the License.
 #include "common/xllm/uuid.h"
 
 namespace xllm_service {
+
+void set_anthropic_usage(xllm::proto::AnthropicUsage* proto_usage,
+                         const llm::Usage& usage) {
+  const size_t num_cached_tokens =
+      std::min(usage.num_cached_tokens, usage.num_prompt_tokens);
+  proto_usage->set_input_tokens(
+      static_cast<int32_t>(usage.num_prompt_tokens - num_cached_tokens));
+  proto_usage->set_output_tokens(
+      static_cast<int32_t>(usage.num_generated_tokens));
+  proto_usage->set_cache_read_input_tokens(
+      static_cast<int32_t>(num_cached_tokens));
+}
+
 namespace {
 
 thread_local llm::ShortUUID short_uuid;
@@ -375,11 +389,7 @@ void fill_usage(const llm::RequestOutput& request_output,
   if (!request_output.usage.has_value()) {
     return;
   }
-  const auto& usage = request_output.usage.value();
-  auto* proto_usage = response->mutable_usage();
-  proto_usage->set_input_tokens(static_cast<int32_t>(usage.num_prompt_tokens));
-  proto_usage->set_output_tokens(
-      static_cast<int32_t>(usage.num_generated_tokens));
+  set_anthropic_usage(response->mutable_usage(), request_output.usage.value());
 }
 
 bool normalize_stream_event_json(const xllm::proto::AnthropicStreamEvent& event,
@@ -410,6 +420,10 @@ bool normalize_stream_event_json(const xllm::proto::AnthropicStreamEvent& event,
         auto& usage = parsed["usage"];
         usage["input_tokens"] = event.usage().input_tokens();
         usage["output_tokens"] = event.usage().output_tokens();
+        if (event.usage().has_cache_read_input_tokens()) {
+          usage["cache_read_input_tokens"] =
+              event.usage().cache_read_input_tokens();
+        }
       }
     }
 

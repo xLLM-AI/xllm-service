@@ -211,11 +211,7 @@ void AnthropicStreamEncoder::add_message_delta(
 
   auto* usage = event.mutable_usage();
   if (request_output.usage.has_value()) {
-    const auto& source_usage = request_output.usage.value();
-    usage->set_input_tokens(
-        static_cast<int32_t>(source_usage.num_prompt_tokens));
-    usage->set_output_tokens(
-        static_cast<int32_t>(source_usage.num_generated_tokens));
+    set_anthropic_usage(usage, request_output.usage.value());
   } else {
     usage->set_input_tokens(0);
     usage->set_output_tokens(0);
