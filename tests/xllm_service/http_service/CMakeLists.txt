@@ -2,6 +2,16 @@ include(cc_test)
 
 cc_test(
   NAME
+    usage_proto_adapter_test
+  SRCS
+    usage_proto_adapter_test.cpp
+  DEPS
+    :usage_proto_adapter
+    GTest::gtest_main
+)
+
+cc_test(
+  NAME
     chat_json_parser_test
   SRCS
     chat_json_parser_test.cpp

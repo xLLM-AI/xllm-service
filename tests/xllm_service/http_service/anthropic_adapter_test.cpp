@@ -807,7 +807,7 @@ TEST(AnthropicAdapterTest, BuildsNonStreamAnthropicJson) {
   usage.num_prompt_tokens = 3;
   usage.num_generated_tokens = 4;
   usage.num_total_tokens = 7;
-  usage.num_cached_tokens = 2;
+  usage.num_prefix_cache_hit_tokens = 2;
   output.usage = usage;
 
   xllm::proto::AnthropicMessagesResponse response;

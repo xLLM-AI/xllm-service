@@ -34,8 +34,6 @@ namespace xllm_service {
 
 class AnthropicStreamEncoder;
 
-void set_openai_usage(xllm::proto::Usage* proto_usage, const llm::Usage& usage);
-
 struct ChatStreamParseState {
   std::unordered_set<size_t> first_message_sent;
   std::shared_ptr<xllm::StreamOutputParser> stream_parser;

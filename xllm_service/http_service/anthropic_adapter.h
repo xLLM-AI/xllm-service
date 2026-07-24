@@ -32,9 +32,6 @@ struct AnthropicAdaptResult {
   std::string error;
 };
 
-void set_anthropic_usage(xllm::proto::AnthropicUsage* proto_usage,
-                         const llm::Usage& usage);
-
 std::string new_anthropic_id();
 
 AnthropicAdaptResult parse_anthropic_json(

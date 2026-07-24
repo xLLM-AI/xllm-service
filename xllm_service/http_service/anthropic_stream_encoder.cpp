@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "api_service/anthropic_stream_utils.h"
 #include "common/xllm/uuid.h"
+#include "http_service/usage_proto_adapter.h"
 
 namespace xllm_service {
 namespace {
@@ -211,7 +212,7 @@ void AnthropicStreamEncoder::add_message_delta(
 
   auto* usage = event.mutable_usage();
   if (request_output.usage.has_value()) {
-    set_anthropic_usage(usage, request_output.usage.value());
+    *usage = to_anthropic_usage_proto(request_output.usage.value());
   } else {
     usage->set_input_tokens(0);
     usage->set_output_tokens(0);

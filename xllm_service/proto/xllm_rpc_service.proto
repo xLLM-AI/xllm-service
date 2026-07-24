@@ -100,7 +100,7 @@ message OutputUsage {
   // the total number of tokens used in the request (prompt + completion).
   int32 num_total_tokens = 3;
   // the number of prompt tokens served from prefix cache.
-  int32 num_cached_tokens = 4;
+  int32 num_prefix_cache_hit_tokens = 4;
 }
 
 message LogProbData {

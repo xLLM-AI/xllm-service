@@ -4,6 +4,18 @@ include(cc_test)
 
 cc_library(
   NAME
+  disagg_generation_adapter
+  HDRS
+    disagg_generation_adapter.h
+  SRCS
+    disagg_generation_adapter.cpp
+  DEPS
+    :common
+    proto::proto_rpc_service
+)
+
+cc_library(
+  NAME
   xllm_rpc_service
   HDRS
     service.h
@@ -11,6 +23,7 @@ cc_library(
     service.cpp
   DEPS
     :common
+    :disagg_generation_adapter
     :scheduler
     absl::random_random
     absl::strings
@@ -28,10 +41,12 @@ cc_binary(
   SRCS 
     rpc_service_test.cpp
   DEPS
+    :disagg_generation_adapter
     :xllm_rpc_service
     gflags::gflags
     glog::glog
     GTest::gtest_main
+    proto_xllm
 )
 add_test(NAME XllmRpcServiceTest COMMAND xllm_rpc_service_test)
 

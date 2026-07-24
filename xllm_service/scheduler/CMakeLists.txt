@@ -55,6 +55,7 @@ cc_library(
   DEPS
     :anthropic_adapter
     :anthropic_stream_encoder
+    :usage_proto_adapter
     :chat_template
     :deepseek_v4_cpp_chat_template
     :model_type

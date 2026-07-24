@@ -20,24 +20,13 @@ limitations under the License.
 #include "common/anthropic_tracer.h"
 #include "http_service/anthropic_adapter.h"
 #include "http_service/anthropic_stream_encoder.h"
+#include "http_service/usage_proto_adapter.h"
 #include "scheduler/xllm_chat_parse_bridge.h"
 #include "xllm/xllm/api_service/stream_output_parser.h"
 #include "xllm/xllm/api_service/utils.h"
 #include "xllm/xllm/function_call/function_call_parser.h"
 
 namespace xllm_service {
-
-void set_openai_usage(xllm::proto::Usage* proto_usage,
-                      const llm::Usage& usage) {
-  CHECK(proto_usage != nullptr);
-  proto_usage->set_prompt_tokens(static_cast<int32_t>(usage.num_prompt_tokens));
-  proto_usage->set_completion_tokens(
-      static_cast<int32_t>(usage.num_generated_tokens));
-  proto_usage->set_total_tokens(static_cast<int32_t>(usage.num_total_tokens));
-  auto* prompt_tokens_details = proto_usage->mutable_prompt_tokens_details();
-  prompt_tokens_details->set_cached_tokens(
-      static_cast<int32_t>(usage.num_cached_tokens));
-}
 
 namespace {
 
@@ -408,7 +397,7 @@ bool ResponseHandler::send_delta_to_client(
     response.set_id(request_id);
     response.set_created(created_time);
     response.set_model(model);
-    set_openai_usage(response.mutable_usage(), usage);
+    *response.mutable_usage() = to_openai_usage_proto(usage);
     if (!call_data->write(response)) {
       return false;
     }
@@ -484,7 +473,7 @@ bool ResponseHandler::send_delta_to_client(
     response.set_created(created_time);
     response.set_model(model);
     response.mutable_choices();
-    set_openai_usage(response.mutable_usage(), usage);
+    *response.mutable_usage() = to_openai_usage_proto(usage);
     if (!call_data->write(response)) {
       return false;
     }
@@ -764,7 +753,7 @@ bool ResponseHandler::send_result_to_client(
   // add usage statistics
   if (req_output.usage.has_value()) {
     const auto& usage = req_output.usage.value();
-    set_openai_usage(response.mutable_usage(), usage);
+    *response.mutable_usage() = to_openai_usage_proto(usage);
   }
 
   return call_data->write_and_finish(response);
@@ -807,7 +796,7 @@ bool ResponseHandler::send_result_to_client(
   // add usage statistics
   if (req_output.usage.has_value()) {
     const auto& usage = req_output.usage.value();
-    set_openai_usage(response.mutable_usage(), usage);
+    *response.mutable_usage() = to_openai_usage_proto(usage);
   }
 
   return call_data->write_and_finish(response);

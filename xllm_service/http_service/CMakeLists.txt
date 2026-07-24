@@ -15,6 +15,18 @@ cc_library(
 
 cc_library(
   NAME
+    usage_proto_adapter
+  HDRS
+    usage_proto_adapter.h
+  SRCS
+    usage_proto_adapter.cpp
+  DEPS
+    :common
+    proto_xllm
+)
+
+cc_library(
+  NAME
     anthropic_adapter
   HDRS
     anthropic_adapter.h
@@ -29,6 +41,7 @@ cc_library(
   DEPS
     :chat_template
     :message_projection
+    :usage_proto_adapter
     :common
     glog::glog
     nlohmann_json::nlohmann_json
@@ -50,6 +63,7 @@ cc_library(
   DEPS
     :anthropic_adapter
     :common
+    :usage_proto_adapter
     glog::glog
     nlohmann_json::nlohmann_json
     proto_xllm

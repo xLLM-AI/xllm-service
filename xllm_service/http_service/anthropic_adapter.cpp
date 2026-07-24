@@ -18,7 +18,6 @@ limitations under the License.
 #include <google/protobuf/util/json_util.h>
 #include <json2pb/pb_to_json.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -31,20 +30,9 @@ limitations under the License.
 #include "api_service/chat_json_parser.h"
 #include "chat_template/message_projection.h"
 #include "common/xllm/uuid.h"
+#include "http_service/usage_proto_adapter.h"
 
 namespace xllm_service {
-
-void set_anthropic_usage(xllm::proto::AnthropicUsage* proto_usage,
-                         const llm::Usage& usage) {
-  const size_t num_cached_tokens =
-      std::min(usage.num_cached_tokens, usage.num_prompt_tokens);
-  proto_usage->set_input_tokens(
-      static_cast<int32_t>(usage.num_prompt_tokens - num_cached_tokens));
-  proto_usage->set_output_tokens(
-      static_cast<int32_t>(usage.num_generated_tokens));
-  proto_usage->set_cache_read_input_tokens(
-      static_cast<int32_t>(num_cached_tokens));
-}
 
 namespace {
 
@@ -389,7 +377,8 @@ void fill_usage(const llm::RequestOutput& request_output,
   if (!request_output.usage.has_value()) {
     return;
   }
-  set_anthropic_usage(response->mutable_usage(), request_output.usage.value());
+  *response->mutable_usage() =
+      to_anthropic_usage_proto(request_output.usage.value());
 }
 
 bool normalize_stream_event_json(const xllm::proto::AnthropicStreamEvent& event,
