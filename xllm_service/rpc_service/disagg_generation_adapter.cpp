@@ -30,10 +30,10 @@ RequestOutputConversionResult invalid_usage(std::string message) {
 
 RequestOutputConversionResult validate_usage(const proto::OutputUsage& usage) {
   if (usage.num_prompt_tokens() < 0 || usage.num_generated_tokens() < 0 ||
-      usage.num_total_tokens() < 0 || usage.num_prefix_cache_hit_tokens() < 0) {
+      usage.num_total_tokens() < 0 || usage.num_cached_tokens() < 0) {
     return invalid_usage("token counts must be non-negative");
   }
-  if (usage.num_prefix_cache_hit_tokens() > usage.num_prompt_tokens()) {
+  if (usage.num_cached_tokens() > usage.num_prompt_tokens()) {
     return invalid_usage(
         "prefix cache hit tokens must not exceed prompt tokens");
   }
@@ -75,8 +75,8 @@ RequestOutputConversionResult request_output_from_disagg_generation(
         static_cast<size_t>(generation.usage().num_generated_tokens());
     usage.num_total_tokens =
         static_cast<size_t>(generation.usage().num_total_tokens());
-    usage.num_prefix_cache_hit_tokens =
-        static_cast<size_t>(generation.usage().num_prefix_cache_hit_tokens());
+    usage.num_cached_tokens =
+        static_cast<size_t>(generation.usage().num_cached_tokens());
     request_output.usage = std::move(usage);
   }
   request_output.finished_on_prefill_instance =

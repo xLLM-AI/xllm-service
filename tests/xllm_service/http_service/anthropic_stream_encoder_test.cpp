@@ -243,7 +243,7 @@ TEST(AnthropicStreamEncoderTest, FinishClosesBlockAndEmitsMessageDeltaStop) {
   llm::Usage usage;
   usage.num_prompt_tokens = 3;
   usage.num_generated_tokens = 5;
-  usage.num_prefix_cache_hit_tokens = 2;
+  usage.num_cached_tokens = 2;
   final.usage = usage;
 
   std::vector<std::string> done;

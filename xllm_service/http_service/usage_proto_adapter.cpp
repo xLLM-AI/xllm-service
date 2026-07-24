@@ -26,18 +26,18 @@ xllm::proto::Usage to_openai_usage_proto(const llm::Usage& usage) {
       static_cast<int32_t>(usage.num_generated_tokens));
   proto_usage.set_total_tokens(static_cast<int32_t>(usage.num_total_tokens));
   proto_usage.mutable_prompt_tokens_details()->set_cached_tokens(
-      static_cast<int32_t>(usage.num_prefix_cache_hit_tokens));
+      static_cast<int32_t>(usage.num_cached_tokens));
   return proto_usage;
 }
 
 xllm::proto::AnthropicUsage to_anthropic_usage_proto(const llm::Usage& usage) {
   xllm::proto::AnthropicUsage proto_usage;
-  proto_usage.set_input_tokens(static_cast<int32_t>(
-      usage.num_prompt_tokens - usage.num_prefix_cache_hit_tokens));
+  proto_usage.set_input_tokens(
+      static_cast<int32_t>(usage.num_prompt_tokens - usage.num_cached_tokens));
   proto_usage.set_output_tokens(
       static_cast<int32_t>(usage.num_generated_tokens));
   proto_usage.set_cache_read_input_tokens(
-      static_cast<int32_t>(usage.num_prefix_cache_hit_tokens));
+      static_cast<int32_t>(usage.num_cached_tokens));
   return proto_usage;
 }
 

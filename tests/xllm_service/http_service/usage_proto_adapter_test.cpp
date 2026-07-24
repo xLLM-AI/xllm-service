@@ -27,22 +27,22 @@ struct UsageCase {
   size_t num_prompt_tokens;
   size_t num_generated_tokens;
   size_t num_total_tokens;
-  size_t num_prefix_cache_hit_tokens;
+  size_t num_cached_tokens;
 };
 
 const std::vector<UsageCase> kUsageCases = {
     {/*num_prompt_tokens=*/8,
      /*num_generated_tokens=*/0,
      /*num_total_tokens=*/8,
-     /*num_prefix_cache_hit_tokens=*/0},
+     /*num_cached_tokens=*/0},
     {/*num_prompt_tokens=*/8,
      /*num_generated_tokens=*/2,
      /*num_total_tokens=*/10,
-     /*num_prefix_cache_hit_tokens=*/3},
+     /*num_cached_tokens=*/3},
     {/*num_prompt_tokens=*/8,
      /*num_generated_tokens=*/2,
      /*num_total_tokens=*/10,
-     /*num_prefix_cache_hit_tokens=*/8},
+     /*num_cached_tokens=*/8},
 };
 
 llm::Usage make_usage(const UsageCase& usage_case) {
@@ -50,7 +50,7 @@ llm::Usage make_usage(const UsageCase& usage_case) {
   usage.num_prompt_tokens = usage_case.num_prompt_tokens;
   usage.num_generated_tokens = usage_case.num_generated_tokens;
   usage.num_total_tokens = usage_case.num_total_tokens;
-  usage.num_prefix_cache_hit_tokens = usage_case.num_prefix_cache_hit_tokens;
+  usage.num_cached_tokens = usage_case.num_cached_tokens;
   return usage;
 }
 
@@ -65,7 +65,7 @@ TEST(UsageProtoAdapterTest, ConvertsPrefixCacheHitsToOpenAIPromptTokenDetails) {
     ASSERT_TRUE(proto_usage.has_prompt_tokens_details());
     EXPECT_TRUE(proto_usage.prompt_tokens_details().has_cached_tokens());
     EXPECT_EQ(proto_usage.prompt_tokens_details().cached_tokens(),
-              usage_case.num_prefix_cache_hit_tokens);
+              usage_case.num_cached_tokens);
   }
 }
 
@@ -75,11 +75,10 @@ TEST(UsageProtoAdapterTest,
     xllm::proto::AnthropicUsage proto_usage =
         to_anthropic_usage_proto(make_usage(usage_case));
 
-    EXPECT_EQ(
-        proto_usage.input_tokens(),
-        usage_case.num_prompt_tokens - usage_case.num_prefix_cache_hit_tokens);
+    EXPECT_EQ(proto_usage.input_tokens(),
+              usage_case.num_prompt_tokens - usage_case.num_cached_tokens);
     EXPECT_EQ(proto_usage.cache_read_input_tokens(),
-              usage_case.num_prefix_cache_hit_tokens);
+              usage_case.num_cached_tokens);
     EXPECT_EQ(proto_usage.output_tokens(), usage_case.num_generated_tokens);
     EXPECT_EQ(
         proto_usage.input_tokens() + proto_usage.cache_read_input_tokens(),

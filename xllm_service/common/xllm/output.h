@@ -49,7 +49,7 @@ struct Usage {
   size_t num_total_tokens = 0;
 
   // the number of prompt tokens served from prefix cache.
-  size_t num_prefix_cache_hit_tokens = 0;
+  size_t num_cached_tokens = 0;
 };
 
 struct LogProbData {

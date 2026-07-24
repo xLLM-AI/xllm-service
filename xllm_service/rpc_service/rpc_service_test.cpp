@@ -33,8 +33,7 @@ proto::DisaggStreamGeneration make_generation(int32_t num_prompt_tokens,
   generation.mutable_usage()->set_num_prompt_tokens(num_prompt_tokens);
   generation.mutable_usage()->set_num_generated_tokens(num_generated_tokens);
   generation.mutable_usage()->set_num_total_tokens(num_total_tokens);
-  generation.mutable_usage()->set_num_prefix_cache_hit_tokens(
-      num_cache_hit_tokens);
+  generation.mutable_usage()->set_num_cached_tokens(num_cache_hit_tokens);
   return generation;
 }
 
@@ -42,10 +41,9 @@ TEST(DisaggGenerationAdapterTest,
      PrefixCacheHitTokensRemainWireCompatibleAtFieldFour) {
   const google::protobuf::FieldDescriptor* sender_field =
       xllm::proto::OutputUsage::descriptor()->FindFieldByName(
-          "num_prefix_cache_hit_tokens");
+          "num_cached_tokens");
   const google::protobuf::FieldDescriptor* receiver_field =
-      proto::OutputUsage::descriptor()->FindFieldByName(
-          "num_prefix_cache_hit_tokens");
+      proto::OutputUsage::descriptor()->FindFieldByName("num_cached_tokens");
 
   ASSERT_NE(sender_field, nullptr);
   ASSERT_NE(receiver_field, nullptr);
@@ -57,11 +55,11 @@ TEST(DisaggGenerationAdapterTest,
   sender_usage.set_num_prompt_tokens(8);
   sender_usage.set_num_generated_tokens(2);
   sender_usage.set_num_total_tokens(10);
-  sender_usage.set_num_prefix_cache_hit_tokens(6);
+  sender_usage.set_num_cached_tokens(6);
 
   proto::OutputUsage receiver_usage;
   ASSERT_TRUE(receiver_usage.ParseFromString(sender_usage.SerializeAsString()));
-  EXPECT_EQ(receiver_usage.num_prefix_cache_hit_tokens(), 6);
+  EXPECT_EQ(receiver_usage.num_cached_tokens(), 6);
 }
 
 TEST(DisaggGenerationAdapterTest, RejectsNegativeTokenCounts) {
@@ -160,7 +158,7 @@ TEST(DisaggGenerationAdapterTest, ConvertsCompleteValidGeneration) {
   EXPECT_EQ(output.usage->num_prompt_tokens, 8u);
   EXPECT_EQ(output.usage->num_generated_tokens, 2u);
   EXPECT_EQ(output.usage->num_total_tokens, 10u);
-  EXPECT_EQ(output.usage->num_prefix_cache_hit_tokens, 6u);
+  EXPECT_EQ(output.usage->num_cached_tokens, 6u);
 
   ASSERT_EQ(output.outputs.size(), 1u);
   const llm::SequenceOutput& converted_sequence = output.outputs.front();
