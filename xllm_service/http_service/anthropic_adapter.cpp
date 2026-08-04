@@ -36,6 +36,8 @@ namespace xllm_service {
 
 namespace {
 
+constexpr float kDefaultTemperature = 1.0f;
+
 thread_local llm::ShortUUID short_uuid;
 
 AnthropicAdaptResult ok_result() { return AnthropicAdaptResult{}; }
@@ -357,6 +359,8 @@ void fill_generation_params(
   }
   if (anthropic_request.has_temperature()) {
     chat_request->set_temperature(anthropic_request.temperature());
+  } else {
+    chat_request->set_temperature(kDefaultTemperature);
   }
   if (anthropic_request.has_top_p()) {
     chat_request->set_top_p(anthropic_request.top_p());

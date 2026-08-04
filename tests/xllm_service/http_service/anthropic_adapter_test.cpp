@@ -115,6 +115,24 @@ TEST(AnthropicAdapterTest, MapsStringSystemMessagesAndParams) {
   EXPECT_EQ(text_content(messages[1]), "hello");
 }
 
+TEST(AnthropicAdapterTest, DefaultsMissingTemperatureToOne) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "messages": [
+      {"role": "user", "content": "hello"}
+    ]
+  })");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_TRUE(chat_request.has_temperature());
+  EXPECT_FLOAT_EQ(chat_request.temperature(), 1.0f);
+}
+
 TEST(AnthropicAdapterTest, MapsTextBlocksForSystemAndMessages) {
   auto request = parse_request(R"({
     "model": "test-model",
