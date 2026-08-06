@@ -67,6 +67,36 @@ std::string proto_json(const google::protobuf::Message& message) {
   return json;
 }
 
+std::string extract_trace_id(const std::string& json_str) {
+  try {
+    auto json = nlohmann::json::parse(json_str);
+    if (!json.is_object() || !json.contains("trace_id") ||
+        !json["trace_id"].is_string()) {
+      return "";
+    }
+    return json["trace_id"].get<std::string>();
+  } catch (const nlohmann::json::exception&) {
+    return "";
+  }
+}
+
+template <typename ProtoRequest, typename CallData>
+void set_request_tracking_fields(ProtoRequest* req_pb,
+                                 const CallData& call_data,
+                                 const std::string& json_str) {
+  if (!call_data.x_request_id.empty()) {
+    req_pb->set_x_request_id(call_data.x_request_id);
+  } else {
+    auto trace_id = extract_trace_id(json_str);
+    if (!trace_id.empty()) {
+      req_pb->set_x_request_id(trace_id);
+    }
+  }
+  if (!call_data.x_request_time.empty()) {
+    req_pb->set_x_request_time(call_data.x_request_time);
+  }
+}
+
 AnthropicTracer make_anthropic_tracer(const std::shared_ptr<Request>& request) {
   AnthropicTracer::Sink sink;
   std::string service_request_id;
@@ -553,6 +583,7 @@ void XllmHttpServiceImpl::Completions(
 
   auto call_data = std::make_shared<CompletionCallData>(
       cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
+  set_request_tracking_fields(req_pb, *call_data, attachment);
   handle(call_data, service_request);
 }
 
@@ -678,6 +709,7 @@ void XllmHttpServiceImpl::ChatCompletions(
 
   auto call_data = std::make_shared<ChatCallData>(
       cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
+  set_request_tracking_fields(req_pb, *call_data, chat_json.json);
   handle(call_data, service_request);
 }
 
@@ -761,12 +793,7 @@ void XllmHttpServiceImpl::AnthropicMessages(
                                           req_pb,
                                           resp_pb,
                                           service_request->trace_callback);
-  if (!call_data->x_request_id.empty()) {
-    req_pb->set_x_request_id(call_data->x_request_id);
-  }
-  if (!call_data->x_request_time.empty()) {
-    req_pb->set_x_request_time(call_data->x_request_time);
-  }
+  set_request_tracking_fields(req_pb, *call_data, attachment);
   handle(call_data, service_request);
 }
 
