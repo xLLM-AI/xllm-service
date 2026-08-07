@@ -47,6 +47,8 @@ class CallData {
       x_request_id = *ctrl->http_request().GetHeader("x-request-id");
     } else if (ctrl->http_request().GetHeader("x-ms-client-request-id")) {
       x_request_id = *ctrl->http_request().GetHeader("x-ms-client-request-id");
+    } else if (ctrl->http_request().GetHeader("trace_id")) {
+      x_request_id = *ctrl->http_request().GetHeader("trace_id");
     }
     return;
   }
