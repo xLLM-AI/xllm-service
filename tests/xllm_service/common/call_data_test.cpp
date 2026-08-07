@@ -79,5 +79,21 @@ TEST(CallDataTest, NonStreamFinishWithErrorMarksControllerFailed) {
   EXPECT_TRUE(done.ran);
 }
 
+TEST(CallDataTest, TraceIdHeaderIsUsedAsRequestId) {
+  brpc::Controller controller;
+  controller.http_request().SetHeader("trace_id", "trace-id-header");
+  xllm::proto::ChatRequest request;
+  xllm::proto::ChatResponse response;
+  TestClosure done;
+
+  ChatCallData call_data(&controller,
+                         /*stream=*/false,
+                         &done,
+                         &request,
+                         &response);
+
+  EXPECT_EQ(call_data.x_request_id, "trace-id-header");
+}
+
 }  // namespace
 }  // namespace xllm_service

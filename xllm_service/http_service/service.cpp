@@ -67,30 +67,12 @@ std::string proto_json(const google::protobuf::Message& message) {
   return json;
 }
 
-std::string extract_trace_id(const std::string& json_str) {
-  try {
-    auto json = nlohmann::json::parse(json_str);
-    if (!json.is_object() || !json.contains("trace_id") ||
-        !json["trace_id"].is_string()) {
-      return "";
-    }
-    return json["trace_id"].get<std::string>();
-  } catch (const nlohmann::json::exception&) {
-    return "";
-  }
-}
-
 template <typename ProtoRequest, typename CallData>
 void set_request_tracking_fields(ProtoRequest* req_pb,
                                  const CallData& call_data,
-                                 const std::string& json_str) {
+                                 const std::string&) {
   if (!call_data.x_request_id.empty()) {
     req_pb->set_x_request_id(call_data.x_request_id);
-  } else {
-    auto trace_id = extract_trace_id(json_str);
-    if (!trace_id.empty()) {
-      req_pb->set_x_request_id(trace_id);
-    }
   }
   if (!call_data.x_request_time.empty()) {
     req_pb->set_x_request_time(call_data.x_request_time);
