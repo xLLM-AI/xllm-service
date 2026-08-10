@@ -371,6 +371,20 @@ void fill_generation_params(
   if (anthropic_request.has_ignore_eos()) {
     chat_request->set_ignore_eos(anthropic_request.ignore_eos());
   }
+  if (anthropic_request.has_output_config() &&
+      anthropic_request.output_config().has_effort() &&
+      !anthropic_request.output_config().effort().empty()) {
+    (*chat_request->mutable_chat_template_kwargs()
+          ->mutable_fields())["reasoning_effort"]
+        .set_string_value(anthropic_request.output_config().effort());
+  }
+  if (anthropic_request.has_thinking() &&
+      (anthropic_request.thinking().type() == "adaptive" ||
+       anthropic_request.thinking().type() == "enabled")) {
+    (*chat_request->mutable_chat_template_kwargs()
+          ->mutable_fields())["thinking"]
+        .set_bool_value(true);
+  }
   for (const auto& stop : anthropic_request.stop_sequences()) {
     chat_request->add_stop(stop);
   }

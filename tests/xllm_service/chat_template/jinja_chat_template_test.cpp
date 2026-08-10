@@ -88,6 +88,24 @@ TEST(JinjaChatTemplate, ApplyChatTemplateKwargs) {
   EXPECT_EQ(result.value(), "hello");
 }
 
+TEST(JinjaChatTemplate, MakesThinkingAndEffortAvailableInExtraContext) {
+  TokenizerArgs args;
+  args.chat_template(
+      "{% if thinking %}thinking{% endif %}:{{ reasoning_effort }}");
+  args.bos_token("");
+  args.eos_token("");
+  JinjaChatTemplate template_(args);
+
+  nlohmann::ordered_json messages = nlohmann::ordered_json::array();
+  nlohmann::ordered_json tools = nlohmann::ordered_json::array();
+  nlohmann::ordered_json kwargs = {{"thinking", true},
+                                   {"reasoning_effort", "high"}};
+  auto result = template_.apply(messages, tools, kwargs);
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result.value(), "thinking:high");
+}
+
 TEST(JinjaChatTemplate, RendersAnthropicOrderedBlocks) {
   const std::string template_str =
       "{% for item in messages[0]['content'] %}"

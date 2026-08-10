@@ -133,6 +133,100 @@ TEST(AnthropicAdapterTest, DefaultsMissingTemperatureToOne) {
   EXPECT_FLOAT_EQ(chat_request.temperature(), 1.0f);
 }
 
+TEST(AnthropicAdapterTest, MapsAdaptiveThinkingAndEffortToTemplateKwargs) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "thinking": {"type": "adaptive", "budget_tokens": 1024},
+    "output_config": {"effort": "high"},
+    "messages": [
+      {"role": "user", "content": "hello"}
+    ]
+  })");
+
+  ASSERT_TRUE(request.has_thinking());
+  EXPECT_EQ(request.thinking().type(), "adaptive");
+  ASSERT_TRUE(request.thinking().has_budget_tokens());
+  EXPECT_EQ(request.thinking().budget_tokens(), 1024);
+  ASSERT_TRUE(request.has_output_config());
+  ASSERT_TRUE(request.output_config().has_effort());
+  EXPECT_EQ(request.output_config().effort(), "high");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_TRUE(chat_request.has_chat_template_kwargs());
+  const auto& kwargs = chat_request.chat_template_kwargs().fields();
+  ASSERT_TRUE(kwargs.contains("thinking"));
+  EXPECT_TRUE(kwargs.at("thinking").bool_value());
+  ASSERT_TRUE(kwargs.contains("reasoning_effort"));
+  EXPECT_EQ(kwargs.at("reasoning_effort").string_value(), "high");
+}
+
+TEST(AnthropicAdapterTest, MapsEnabledThinkingToTemplateKwargs) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "thinking": {"type": "enabled"},
+    "messages": [
+      {"role": "user", "content": "hello"}
+    ]
+  })");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_TRUE(chat_request.has_chat_template_kwargs());
+  const auto& kwargs = chat_request.chat_template_kwargs().fields();
+  ASSERT_TRUE(kwargs.contains("thinking"));
+  EXPECT_TRUE(kwargs.at("thinking").bool_value());
+  EXPECT_FALSE(kwargs.contains("reasoning_effort"));
+}
+
+TEST(AnthropicAdapterTest, PreservesMaxEffortWithoutEnablingThinking) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "output_config": {"effort": "max"},
+    "messages": [
+      {"role": "user", "content": "hello"}
+    ]
+  })");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_TRUE(chat_request.has_chat_template_kwargs());
+  const auto& kwargs = chat_request.chat_template_kwargs().fields();
+  ASSERT_TRUE(kwargs.contains("reasoning_effort"));
+  EXPECT_EQ(kwargs.at("reasoning_effort").string_value(), "max");
+  EXPECT_FALSE(kwargs.contains("thinking"));
+}
+
+TEST(AnthropicAdapterTest, OmitsKwargsForUnsupportedThinkingWithoutEffort) {
+  auto request = parse_request(R"({
+    "model": "test-model",
+    "max_tokens": 8,
+    "thinking": {"type": "disabled"},
+    "messages": [
+      {"role": "user", "content": "hello"}
+    ]
+  })");
+
+  xllm::proto::ChatRequest chat_request;
+  ChatMessages messages;
+  auto result = adapt_request(request, &chat_request, &messages);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  EXPECT_FALSE(chat_request.has_chat_template_kwargs());
+}
+
 TEST(AnthropicAdapterTest, MapsTextBlocksForSystemAndMessages) {
   auto request = parse_request(R"({
     "model": "test-model",

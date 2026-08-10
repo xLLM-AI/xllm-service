@@ -729,6 +729,10 @@ void XllmHttpServiceImpl::AnthropicMessages(
   req_pb->set_request_id(new_anthropic_id());
 
   auto service_request = generate_request(req_pb, "/v1/messages");
+  if (req_pb->has_chat_template_kwargs()) {
+    service_request->chat_template_kwargs =
+        proto_struct_to_json(req_pb->chat_template_kwargs());
+  }
   auto tracer = make_anthropic_tracer(service_request);
   tracer.trace("raw_http_request", attachment);
   tracer.trace("anthropic_request_pb", proto_json(*anthropic_req_pb));

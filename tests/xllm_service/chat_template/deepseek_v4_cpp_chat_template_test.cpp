@@ -163,5 +163,21 @@ TEST(DeepseekV4CppChatTemplate, ThinkingKwargTogglesThinkBlock) {
             "<｜begin▁of▁sentence｜><｜User｜>Hello<｜Assistant｜></think>");
 }
 
+TEST(DeepseekV4CppChatTemplate, MaxEffortWithThinkingAddsMaximumPrefix) {
+  DeepseekV4CppChatTemplate tmpl(make_v4_args());
+  ChatMessages messages{Message("user", "Hello")};
+
+  nlohmann::ordered_json kwargs = {{"thinking", true},
+                                   {"reasoning_effort", "max"}};
+  auto prompt = tmpl.apply(messages, {}, kwargs);
+
+  ASSERT_TRUE(prompt.has_value());
+  EXPECT_NE(prompt->find("Reasoning Effort: Beyond maximum"),
+            std::string::npos);
+  EXPECT_EQ(prompt->find("Reasoning Effort: Absolute maximum"),
+            std::string::npos);
+  EXPECT_NE(prompt->find("<｜Assistant｜><think>"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace xllm_service
