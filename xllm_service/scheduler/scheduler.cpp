@@ -39,6 +39,8 @@ constexpr const char* kEtcdPasswordEnvVar = "ETCD_PASSWORD";
 namespace xllm_service {
 
 Scheduler::Scheduler(const Options& options) : options_(options) {
+  std::optional<std::string> model_type;
+
   // vLLM-backend clusters forward the raw client JSON to vLLM, which does its
   // own tokenization / chat templating. Skip building the local tokenizer and
   // chat template so the master does not require a tokenizer.model / template.
@@ -47,7 +49,7 @@ Scheduler::Scheduler(const Options& options) : options_(options) {
                                                     &tokenizer_args_);
 
     // Select the chat template by config.json model_type (jinja by default).
-    const auto model_type = load_model_type(options_.tokenizer_path());
+    model_type = load_model_type(options_.tokenizer_path());
     switch (select_chat_template_kind(model_type)) {
       case ChatTemplateKind::kDeepseekV4Cpp:
         chat_template_ =
@@ -62,6 +64,13 @@ Scheduler::Scheduler(const Options& options) : options_(options) {
         break;
     }
   }
+
+  const auto parser_formats =
+      resolve_chat_parser_formats_with_xllm(model_type.value_or(""),
+                                            options_.tool_call_parser(),
+                                            options_.reasoning_parser());
+  tool_call_parser_format_ = parser_formats.tool_call_parser;
+  reasoning_parser_format_ = parser_formats.reasoning_parser;
 
   const std::string etcd_username =
       utils::get_optional_string_env(kEtcdUsernameEnvVar).value_or("");
@@ -345,19 +354,15 @@ bool Scheduler::record_new_request(std::shared_ptr<ChatCallData> call_data,
     auto tools_for_parse =
         (request->tool_choice == "none" ? std::vector<JsonTool>{}
                                         : request->tools);
-    auto tool_call_parser_pref = options_.tool_call_parser();
-    auto reasoning_parser_pref = options_.reasoning_parser();
-    const auto parser_formats = resolve_chat_parser_formats_with_xllm(
-        request->model, tool_call_parser_pref, reasoning_parser_pref);
     const bool force_reasoning = get_enable_thinking_from_request(
-        request->chat_template_kwargs, parser_formats.reasoning_parser);
+        request->chat_template_kwargs, reasoning_parser_format_);
     std::shared_ptr<ChatStreamParseState> stream_state;
     if (request->stream) {
       stream_state = response_handler_.create_chat_stream_parse_state(
           tools_for_parse,
           request->model,
-          tool_call_parser_pref,
-          reasoning_parser_pref,
+          tool_call_parser_format_,
+          reasoning_parser_format_,
           force_reasoning);
     }
 
@@ -369,8 +374,8 @@ bool Scheduler::record_new_request(std::shared_ptr<ChatCallData> call_data,
          stream = request->stream,
          include_usage = request->include_usage,
          tools = std::move(tools_for_parse),
-         tool_call_parser = std::move(tool_call_parser_pref),
-         reasoning_parser = std::move(reasoning_parser_pref),
+         tool_call_parser = tool_call_parser_format_,
+         reasoning_parser = reasoning_parser_format_,
          force_reasoning,
          stream_state = std::move(stream_state),
          service_request_id = request->service_request_id,
@@ -433,12 +438,8 @@ bool Scheduler::record_new_request(std::shared_ptr<AnthropicCallData> call_data,
     auto tools_for_parse =
         (request->tool_choice == "none" ? std::vector<JsonTool>{}
                                         : request->tools);
-    auto tool_call_parser_pref = options_.tool_call_parser();
-    auto reasoning_parser_pref = options_.reasoning_parser();
-    const auto parser_formats = resolve_chat_parser_formats_with_xllm(
-        request->model, tool_call_parser_pref, reasoning_parser_pref);
     const bool force_reasoning = get_enable_thinking_from_request(
-        request->chat_template_kwargs, parser_formats.reasoning_parser);
+        request->chat_template_kwargs, reasoning_parser_format_);
     auto stream_encoder =
         request->stream
             ? std::make_shared<AnthropicStreamEncoder>(request->model)
@@ -447,8 +448,8 @@ bool Scheduler::record_new_request(std::shared_ptr<AnthropicCallData> call_data,
         request->stream
             ? create_stream_output_parser_with_xllm(tools_for_parse,
                                                     request->model,
-                                                    tool_call_parser_pref,
-                                                    reasoning_parser_pref,
+                                                    tool_call_parser_format_,
+                                                    reasoning_parser_format_,
                                                     force_reasoning)
             : nullptr;
     request->call_data = call_data;
@@ -460,8 +461,8 @@ bool Scheduler::record_new_request(std::shared_ptr<AnthropicCallData> call_data,
          stream_encoder,
          stream_parser,
          tools = std::move(tools_for_parse),
-         tool_call_parser = std::move(tool_call_parser_pref),
-         reasoning_parser = std::move(reasoning_parser_pref),
+         tool_call_parser = tool_call_parser_format_,
+         reasoning_parser = reasoning_parser_format_,
          force_reasoning](
             const llm::RequestOutput& req_output) mutable -> bool {
       if (req_output.status.has_value()) {

@@ -46,6 +46,172 @@ std::vector<JsonTool> make_bash_tools() {
                    JsonFunction("Bash", "Run a shell command", params))};
 }
 
+std::string make_deepseek_v4_tool_call() {
+  return "<｜DSML｜tool_calls>"
+         "<｜DSML｜invoke name=\"Write\">"
+         "<｜DSML｜parameter name=\"content\" string=\"true\">"
+         "hello</｜DSML｜parameter>"
+         "<｜DSML｜parameter name=\"file_path\" string=\"true\">"
+         "/tmp/two_sum.py</｜DSML｜parameter>"
+         "</｜DSML｜invoke>"
+         "</｜DSML｜tool_calls>";
+}
+
+void expect_write_tool_call(const std::string& arguments) {
+  auto args = nlohmann::json::parse(arguments);
+  EXPECT_EQ(args["content"], "hello");
+  EXPECT_EQ(args["file_path"], "/tmp/two_sum.py");
+}
+
+TEST(XllmChatParseBridgeTest, ResolvesDeepSeekV4AutoParsersFromModelConfig) {
+  for (const std::string model_type : {"deepseek_v4", "deepseek_v4_mtp"}) {
+    auto formats =
+        resolve_chat_parser_formats_with_xllm(model_type, "auto", "auto");
+    EXPECT_EQ(formats.tool_call_parser, "deepseekv4");
+    EXPECT_EQ(formats.reasoning_parser, "deepseek-v4");
+  }
+}
+
+TEST(XllmChatParseBridgeTest, ResolvesGlm5AutoParsersFromModelConfig) {
+  for (const std::string model_type : {"glm_moe_dsa", "glm_moe_dsa_mtp"}) {
+    auto formats =
+        resolve_chat_parser_formats_with_xllm(model_type, "auto", "auto");
+    EXPECT_EQ(formats.tool_call_parser, "glm5");
+    EXPECT_EQ(formats.reasoning_parser, "glm5");
+  }
+}
+
+TEST(XllmChatParseBridgeTest, KeepsExplicitDeepSeekV4ToolParser) {
+  auto formats =
+      resolve_chat_parser_formats_with_xllm("deepseek_v4", "deepseekv4", "");
+  EXPECT_EQ(formats.tool_call_parser, "deepseekv4");
+
+  auto result = parse_chat_output_with_xllm(make_deepseek_v4_tool_call(),
+                                            make_tools(),
+                                            "client-model-alias",
+                                            "stop",
+                                            formats.tool_call_parser);
+  ASSERT_TRUE(result.tool_calls.has_value());
+  ASSERT_EQ(result.tool_calls->size(), 1);
+  EXPECT_EQ(result.tool_calls->Get(0).function().name(), "Write");
+  expect_write_tool_call(result.tool_calls->Get(0).function().arguments());
+}
+
+TEST(XllmChatParseBridgeTest,
+     ParsesDeepSeekV4ToolCallUsingConfigFormatsWithClientAlias) {
+  auto formats =
+      resolve_chat_parser_formats_with_xllm("deepseek_v4", "auto", "auto");
+
+  auto result = parse_chat_output_with_xllm(make_deepseek_v4_tool_call(),
+                                            make_tools(),
+                                            "client-model-alias",
+                                            "stop",
+                                            formats.tool_call_parser,
+                                            formats.reasoning_parser,
+                                            true);
+
+  EXPECT_TRUE(result.text.empty());
+  ASSERT_TRUE(result.tool_calls.has_value());
+  ASSERT_EQ(result.tool_calls->size(), 1);
+  EXPECT_EQ(result.tool_calls->Get(0).function().name(), "Write");
+  expect_write_tool_call(result.tool_calls->Get(0).function().arguments());
+  EXPECT_EQ(result.finish_reason, "tool_calls");
+}
+
+TEST(XllmChatParseBridgeTest,
+     StreamsDeepSeekV4ToolCallUsingConfigFormatsWithClientAlias) {
+  auto formats =
+      resolve_chat_parser_formats_with_xllm("deepseek_v4", "auto", "auto");
+  auto stream_parser =
+      create_stream_output_parser_with_xllm(make_tools(),
+                                            "client-model-alias",
+                                            formats.tool_call_parser,
+                                            formats.reasoning_parser,
+                                            true);
+  auto* parser = stream_parser->get_tool_call_parser(0);
+  ASSERT_NE(parser, nullptr);
+
+  auto result = parser->parse_streaming_increment(make_deepseek_v4_tool_call());
+
+  EXPECT_TRUE(result.normal_text.empty());
+  ASSERT_FALSE(result.calls.empty());
+  ASSERT_TRUE(result.calls.front().name.has_value());
+  EXPECT_EQ(result.calls.front().name.value(), "Write");
+  expect_write_tool_call(result.calls.back().parameters);
+}
+
+TEST(XllmChatParseBridgeTest,
+     ParsesDeepSeekV4ReasoningUsingConfigFormatsWithClientAlias) {
+  auto formats =
+      resolve_chat_parser_formats_with_xllm("deepseek_v4", "auto", "auto");
+
+  auto result = parse_chat_output_with_xllm("need data</think>final answer",
+                                            {},
+                                            "client-model-alias",
+                                            "stop",
+                                            formats.tool_call_parser,
+                                            formats.reasoning_parser,
+                                            true);
+
+  EXPECT_EQ(result.text, "final answer");
+  ASSERT_TRUE(result.reasoning_content.has_value());
+  EXPECT_EQ(result.reasoning_content.value(), "need data");
+}
+
+TEST(XllmChatParseBridgeTest,
+     StreamsDeepSeekV4ReasoningUsingConfigFormatsWithClientAlias) {
+  auto formats =
+      resolve_chat_parser_formats_with_xllm("deepseek_v4", "auto", "auto");
+  auto stream_parser =
+      create_stream_output_parser_with_xllm({},
+                                            "client-model-alias",
+                                            formats.tool_call_parser,
+                                            formats.reasoning_parser,
+                                            true);
+  auto* parser = stream_parser->get_reasoning_parser(0);
+  ASSERT_NE(parser, nullptr);
+
+  auto reasoning = parser->parse_stream_chunk("need data");
+  ASSERT_TRUE(reasoning.reasoning_text.has_value());
+  EXPECT_EQ(reasoning.reasoning_text.value(), "need data");
+  EXPECT_FALSE(reasoning.normal_text.has_value());
+
+  auto answer = parser->parse_stream_chunk("</think>final answer");
+  ASSERT_TRUE(answer.normal_text.has_value());
+  EXPECT_EQ(answer.normal_text.value(), "final answer");
+}
+
+TEST(XllmChatParseBridgeTest, ReasoningEffortNoneDisablesForcedReasoning) {
+  nlohmann::json kwargs = {{"reasoning_effort", "none"}, {"thinking", true}};
+  EXPECT_FALSE(get_enable_thinking_from_request(kwargs, "deepseek-v4"));
+
+  auto result = parse_chat_output_with_xllm("final answer",
+                                            {},
+                                            "client-model-alias",
+                                            "stop",
+                                            "",
+                                            "deepseek-v4",
+                                            false);
+  EXPECT_EQ(result.text, "final answer");
+  EXPECT_FALSE(result.reasoning_content.has_value());
+}
+
+TEST(XllmChatParseBridgeTest, StreamsNormalContentWhenReasoningEffortIsNone) {
+  nlohmann::json kwargs = {{"reasoning_effort", "none"}};
+  const bool force_reasoning =
+      get_enable_thinking_from_request(kwargs, "deepseek-v4");
+  auto stream_parser = create_stream_output_parser_with_xllm(
+      {}, "client-model-alias", "", "deepseek-v4", force_reasoning);
+  auto* parser = stream_parser->get_reasoning_parser(0);
+  ASSERT_NE(parser, nullptr);
+
+  auto result = parser->parse_stream_chunk("final answer");
+
+  ASSERT_TRUE(result.normal_text.has_value());
+  EXPECT_EQ(result.normal_text.value(), "final answer");
+  EXPECT_FALSE(result.reasoning_text.has_value());
+}
+
 TEST(XllmChatParseBridgeTest, ParsesGlmToolCallWithReasoningParserConfigured) {
   std::string text =
       "<tool_call>Write<arg_key>content</arg_key><arg_value>hello</arg_value>"

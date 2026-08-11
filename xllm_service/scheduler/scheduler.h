@@ -111,6 +111,10 @@ class Scheduler final {
   // chat template instance
   std::unique_ptr<ChatTemplate> chat_template_;
 
+  // Parser formats resolved once from config.json model_type.
+  std::string tool_call_parser_format_;
+  std::string reasoning_parser_format_;
+
   std::shared_ptr<EtcdClient> etcd_client_;
 
   std::unique_ptr<Tokenizer> tokenizer_;

@@ -44,7 +44,7 @@ struct ResolvedChatParserFormats {
 };
 
 ResolvedChatParserFormats resolve_chat_parser_formats_with_xllm(
-    const std::string& model,
+    const std::string& model_type,
     const std::string& parser_preference = "",
     const std::string& reasoning_parser_preference = "");
 

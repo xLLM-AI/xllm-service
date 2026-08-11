@@ -22,8 +22,19 @@ limitations under the License.
 namespace xllm_service {
 namespace {
 
+constexpr double kDefaultTemperature = 1.0;
+
 ChatJsonResult json_error(const std::string& error) {
   return ChatJsonResult{false, "", error};
+}
+
+ChatJsonResult normalized_json_result(nlohmann::json&& json,
+                                      std::string&& original,
+                                      bool modified) {
+  if (!modified) {
+    return ChatJsonResult{true, std::move(original), ""};
+  }
+  return ChatJsonResult{true, json.dump(), ""};
 }
 
 std::pair<bool, std::string> text_content(const nlohmann::json& content,
@@ -65,11 +76,39 @@ std::pair<bool, std::string> text_content(const nlohmann::json& content,
 ChatJsonResult normalize_chat_json(std::string json_str) {
   try {
     auto json = nlohmann::json::parse(json_str);
-    if (!json.contains("messages") || !json["messages"].is_array()) {
+    if (!json.is_object()) {
       return ChatJsonResult{true, std::move(json_str), ""};
     }
 
     bool modified = false;
+    if (!json.contains("temperature") || json["temperature"].is_null()) {
+      json["temperature"] = kDefaultTemperature;
+      modified = true;
+    }
+
+    if (json.contains("reasoning_effort") &&
+        json["reasoning_effort"].is_string() &&
+        !json["reasoning_effort"].get_ref<const std::string&>().empty()) {
+      if (!json.contains("chat_template_kwargs") ||
+          json["chat_template_kwargs"].is_null()) {
+        json["chat_template_kwargs"] = nlohmann::json::object();
+        modified = true;
+      }
+      if (json["chat_template_kwargs"].is_object() &&
+          (!json["chat_template_kwargs"].contains("reasoning_effort") ||
+           json["chat_template_kwargs"]["reasoning_effort"] !=
+               json["reasoning_effort"])) {
+        json["chat_template_kwargs"]["reasoning_effort"] =
+            json["reasoning_effort"];
+        modified = true;
+      }
+    }
+
+    if (!json.contains("messages") || !json["messages"].is_array()) {
+      return normalized_json_result(
+          std::move(json), std::move(json_str), modified);
+    }
+
     for (auto& message : json["messages"]) {
       if (!message.is_object()) {
         return json_error("Message in 'messages' array must be an object.");
@@ -87,10 +126,8 @@ ChatJsonResult normalize_chat_json(std::string json_str) {
       modified = true;
     }
 
-    if (!modified) {
-      return ChatJsonResult{true, std::move(json_str), ""};
-    }
-    return ChatJsonResult{true, json.dump(), ""};
+    return normalized_json_result(
+        std::move(json), std::move(json_str), modified);
   } catch (const nlohmann::json::exception& e) {
     return json_error("Invalid JSON format: " + std::string(e.what()));
   } catch (const std::exception& e) {

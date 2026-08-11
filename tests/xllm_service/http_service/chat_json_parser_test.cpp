@@ -41,9 +41,103 @@ void expect_error(const std::string& input, const std::string& error) {
 TEST(ChatJsonParserTest, StringContentPassesThrough) {
   std::string input = R"({
     "model": "test",
+    "temperature": 0.5,
     "messages": [{"role": "user", "content": "hello"}]
   })";
   expect_json(input, input);
+}
+
+TEST(ChatJsonParserTest, DefaultsMissingTemperatureToOne) {
+  std::string input = R"({
+    "model": "test",
+    "messages": [{"role": "user", "content": "hello"}]
+  })";
+
+  auto result = normalize_chat_json(input);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(parse(result.json)["temperature"], 1.0);
+}
+
+TEST(ChatJsonParserTest, DefaultsNullTemperatureToOne) {
+  std::string input = R"({
+    "model": "test",
+    "temperature": null,
+    "messages": [{"role": "user", "content": "hello"}]
+  })";
+
+  auto result = normalize_chat_json(input);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(parse(result.json)["temperature"], 1.0);
+}
+
+TEST(ChatJsonParserTest, PreservesExplicitZeroTemperature) {
+  std::string input = R"({
+    "model": "test",
+    "temperature": 0,
+    "messages": [{"role": "user", "content": "hello"}]
+  })";
+  expect_json(input, input);
+}
+
+TEST(ChatJsonParserTest, MapsReasoningEffortToTemplateKwargs) {
+  std::string input = R"({
+    "model": "test",
+    "temperature": 0.5,
+    "reasoning_effort": "high",
+    "messages": [{"role": "user", "content": "hello"}]
+  })";
+
+  auto result = normalize_chat_json(input);
+  ASSERT_TRUE(result.ok) << result.error;
+  auto json = parse(result.json);
+  EXPECT_EQ(json["chat_template_kwargs"]["reasoning_effort"], "high");
+}
+
+TEST(ChatJsonParserTest, MapsReasoningEffortWhenTemplateKwargsIsNull) {
+  std::string input = R"({
+    "model": "test",
+    "temperature": 0.5,
+    "reasoning_effort": "none",
+    "chat_template_kwargs": null,
+    "messages": [{"role": "user", "content": "hello"}]
+  })";
+
+  auto result = normalize_chat_json(input);
+  ASSERT_TRUE(result.ok) << result.error;
+  auto json = parse(result.json);
+  EXPECT_TRUE(json["chat_template_kwargs"].is_object());
+  EXPECT_EQ(json["chat_template_kwargs"]["reasoning_effort"], "none");
+}
+
+TEST(ChatJsonParserTest, MergesReasoningEffortIntoTemplateKwargs) {
+  std::string input = R"({
+    "model": "test",
+    "temperature": 0.5,
+    "reasoning_effort": "max",
+    "chat_template_kwargs": {"enable_thinking": true},
+    "messages": [{"role": "user", "content": "hello"}]
+  })";
+
+  auto result = normalize_chat_json(input);
+  ASSERT_TRUE(result.ok) << result.error;
+  auto json = parse(result.json);
+  EXPECT_EQ(json["chat_template_kwargs"]["enable_thinking"], true);
+  EXPECT_EQ(json["chat_template_kwargs"]["reasoning_effort"], "max");
+}
+
+TEST(ChatJsonParserTest, TopLevelReasoningEffortOverridesTemplateKwarg) {
+  std::string input = R"({
+    "model": "test",
+    "temperature": 0.5,
+    "reasoning_effort": "low",
+    "chat_template_kwargs": {"reasoning_effort": "high"},
+    "messages": [{"role": "user", "content": "hello"}]
+  })";
+
+  auto result = normalize_chat_json(input);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(parse(result.json)["chat_template_kwargs"]["reasoning_effort"],
+            "low");
 }
 
 TEST(ChatJsonParserTest, SingleTextItemCombined) {
@@ -51,6 +145,7 @@ TEST(ChatJsonParserTest, SingleTextItemCombined) {
     "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
   })";
   std::string expected = R"({
+    "temperature": 1.0,
     "messages": [{"role": "user", "content": "hello"}]
   })";
   expect_json(input, expected);
@@ -67,6 +162,7 @@ TEST(ChatJsonParserTest, MultipleTextItemsUseNewline) {
     }]
   })";
   std::string expected = R"({
+    "temperature": 1.0,
     "messages": [{"role": "user", "content": "hello\nworld"}]
   })";
   expect_json(input, expected);
@@ -80,6 +176,7 @@ TEST(ChatJsonParserTest, MultipleMessagesMixedContent) {
     ]
   })";
   std::string expected = R"({
+    "temperature": 1.0,
     "messages": [
       {"role": "system", "content": "plain"},
       {"role": "user", "content": "array"}
@@ -93,6 +190,7 @@ TEST(ChatJsonParserTest, EmptyArrayBecomesEmptyString) {
     "messages": [{"role": "user", "content": []}]
   })";
   std::string expected = R"({
+    "temperature": 1.0,
     "messages": [{"role": "user", "content": ""}]
   })";
   expect_json(input, expected);
@@ -101,6 +199,7 @@ TEST(ChatJsonParserTest, EmptyArrayBecomesEmptyString) {
 TEST(ChatJsonParserTest, PreservesOtherFields) {
   std::string input = R"({
     "model": "test",
+    "temperature": 0.5,
     "stream": true,
     "chat_template_kwargs": {"enable_thinking": false},
     "tool_choice": "auto",

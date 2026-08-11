@@ -27,7 +27,8 @@ struct ChatJsonResult {
 };
 
 // Normalize OpenAI-style chat JSON for the text-only ChatRequest proto.
-// Text-only content arrays are collapsed to a string before protobuf parsing.
+// Applies OpenAI defaults, maps compatibility fields, and collapses text-only
+// content arrays to a string before protobuf parsing.
 ChatJsonResult normalize_chat_json(std::string json_str);
 
 }  // namespace xllm_service

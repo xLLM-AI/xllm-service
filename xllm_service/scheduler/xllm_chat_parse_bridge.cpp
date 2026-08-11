@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "scheduler/xllm_chat_parse_bridge.h"
 
-#include <absl/strings/ascii.h>
 #include <absl/strings/str_replace.h>
 #include <glog/logging.h>
 
@@ -47,50 +46,18 @@ std::vector<xllm::JsonTool> to_xllm_tools(
   return xllm_tools;
 }
 
-std::string infer_model_type_from_model_id(const std::string& model_id) {
-  std::string lower = absl::AsciiStrToLower(model_id);
-  if (lower.find("qwen3") != std::string::npos) {
-    return "qwen3";
-  }
-  if (lower.find("qwen2") != std::string::npos) {
-    return "qwen2";
-  }
-  if (lower.find("kimi_k2") != std::string::npos ||
-      lower.find("kimi-k2") != std::string::npos) {
-    return "kimi_k2";
-  }
-  if (lower.find("deepseek_v32") != std::string::npos ||
-      lower.find("deepseek-v3.2") != std::string::npos ||
-      lower.find("deepseekv32") != std::string::npos) {
-    return "deepseek_v32";
-  }
-  if (lower.find("deepseek_v3") != std::string::npos ||
-      lower.find("deepseek-v3") != std::string::npos ||
-      lower.find("deepseekv3") != std::string::npos) {
-    return "deepseek_v3";
-  }
-  if (lower.find("glm") != std::string::npos) {
-    return "glm4_moe";
-  }
-  if (lower.find("step3") != std::string::npos) {
-    return "step3";
-  }
-  return "";
-}
-
 std::string resolve_tool_call_parser(const std::string& parser_preference,
-                                     const std::string& model_id) {
+                                     const std::string& model_type) {
   if (parser_preference.empty()) {
     return "";
   }
 
-  std::string model_type;
   if (parser_preference == "auto") {
-    model_type = infer_model_type_from_model_id(model_id);
     if (model_type.empty()) {
-      // Keep xllm_service behavior compatible: unknown model_id under auto
-      // silently disables parsing instead of aborting the process.
       return "";
+    }
+    if (model_type == "deepseek_v4" || model_type == "deepseek_v4_mtp") {
+      return "deepseekv4";
     }
   }
 
@@ -100,18 +67,20 @@ std::string resolve_tool_call_parser(const std::string& parser_preference,
 
 std::string resolve_reasoning_parser(
     const std::string& reasoning_parser_preference,
-    const std::string& model_id) {
+    const std::string& model_type) {
   if (reasoning_parser_preference.empty()) {
     return "";
   }
 
-  std::string model_type;
   if (reasoning_parser_preference == "auto") {
-    model_type = infer_model_type_from_model_id(model_id);
     if (model_type.empty()) {
-      // Keep xllm_service behavior compatible: unknown model_id under auto
-      // silently disables parsing instead of aborting the process.
       return "";
+    }
+    if (model_type == "deepseek_v4" || model_type == "deepseek_v4_mtp") {
+      return "deepseek-v4";
+    }
+    if (model_type == "glm_moe_dsa" || model_type == "glm_moe_dsa_mtp") {
+      return "glm5";
     }
   }
 
@@ -130,6 +99,13 @@ bool get_enable_thinking_from_request(
   bool default_value = !reasoning_parser_format.empty();
   if (chat_template_kwargs.empty()) {
     return default_value;
+  }
+
+  auto reasoning_effort = chat_template_kwargs.find("reasoning_effort");
+  if (reasoning_effort != chat_template_kwargs.end() &&
+      reasoning_effort->is_string() &&
+      reasoning_effort->get_ref<const std::string&>() == "none") {
+    return false;
   }
 
   if (chat_template_kwargs.contains("enable_thinking") ||
@@ -229,13 +205,14 @@ ChatParseResult parse_chat_output_with_xllm(
 }
 
 ResolvedChatParserFormats resolve_chat_parser_formats_with_xllm(
-    const std::string& model,
+    const std::string& model_type,
     const std::string& parser_preference,
     const std::string& reasoning_parser_preference) {
   ResolvedChatParserFormats formats;
-  formats.tool_call_parser = resolve_tool_call_parser(parser_preference, model);
+  formats.tool_call_parser =
+      resolve_tool_call_parser(parser_preference, model_type);
   formats.reasoning_parser =
-      resolve_reasoning_parser(reasoning_parser_preference, model);
+      resolve_reasoning_parser(reasoning_parser_preference, model_type);
   return formats;
 }
 

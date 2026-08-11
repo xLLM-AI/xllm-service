@@ -817,7 +817,7 @@ TEST(AnthropicAdapterTest, RendersPreservedThinkingBlocksToTemplate) {
       "{% if message.get('tool_calls') %}"
       "{% for tool_call in message['tool_calls'] %}"
       "call={{ tool_call['function']['name'] }}:"
-      "{{ tool_call['function']['arguments'] }}|"
+      "{{ tool_call['function']['arguments'] | tojson }}|"
       "{% endfor %}"
       "{% endif %}"
       "{% if message['role'] == 'tool' %}"
@@ -837,7 +837,7 @@ TEST(AnthropicAdapterTest, RendersPreservedThinkingBlocksToTemplate) {
   EXPECT_EQ(prompt.value(),
             "thinking:plan A:sig_a|tool_use:toolu_1:Read:a.txt|"
             "redacted_thinking:opaque_a|thinking:plan B:sig_b|text:done|"
-            "call=Read:{\"path\":\"a.txt\"}|"
+            "call=Read:{\"path\": \"a.txt\"}|"
             "tool=tool:toolu_1:missing");
 }
 
