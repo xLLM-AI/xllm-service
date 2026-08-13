@@ -46,9 +46,16 @@ std::vector<xllm::JsonTool> to_xllm_tools(
   return xllm_tools;
 }
 
+bool is_deepseek_v4_model_type(const std::string& model_type) {
+  return model_type == "deepseek_v4" || model_type == "deepseek_v4_mtp";
+}
+
 std::string resolve_tool_call_parser(const std::string& parser_preference,
                                      const std::string& model_type) {
   if (parser_preference.empty()) {
+    if (is_deepseek_v4_model_type(model_type)) {
+      return "deepseekv4";
+    }
     return "";
   }
 
@@ -56,7 +63,7 @@ std::string resolve_tool_call_parser(const std::string& parser_preference,
     if (model_type.empty()) {
       return "";
     }
-    if (model_type == "deepseek_v4" || model_type == "deepseek_v4_mtp") {
+    if (is_deepseek_v4_model_type(model_type)) {
       return "deepseekv4";
     }
   }
@@ -69,6 +76,9 @@ std::string resolve_reasoning_parser(
     const std::string& reasoning_parser_preference,
     const std::string& model_type) {
   if (reasoning_parser_preference.empty()) {
+    if (is_deepseek_v4_model_type(model_type)) {
+      return "deepseek-v4";
+    }
     return "";
   }
 
@@ -76,7 +86,7 @@ std::string resolve_reasoning_parser(
     if (model_type.empty()) {
       return "";
     }
-    if (model_type == "deepseek_v4" || model_type == "deepseek_v4_mtp") {
+    if (is_deepseek_v4_model_type(model_type)) {
       return "deepseek-v4";
     }
     if (model_type == "glm_moe_dsa" || model_type == "glm_moe_dsa_mtp") {

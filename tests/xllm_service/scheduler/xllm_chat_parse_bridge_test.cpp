@@ -72,6 +72,20 @@ TEST(XllmChatParseBridgeTest, ResolvesDeepSeekV4AutoParsersFromModelConfig) {
   }
 }
 
+TEST(XllmChatParseBridgeTest, DefaultsDeepSeekV4ParsersWhenFlagsAreUnset) {
+  for (const std::string model_type : {"deepseek_v4", "deepseek_v4_mtp"}) {
+    auto formats = resolve_chat_parser_formats_with_xllm(model_type);
+    EXPECT_EQ(formats.tool_call_parser, "deepseekv4");
+    EXPECT_EQ(formats.reasoning_parser, "deepseek-v4");
+  }
+}
+
+TEST(XllmChatParseBridgeTest, KeepsUnsetParsersDisabledForOtherModels) {
+  auto formats = resolve_chat_parser_formats_with_xllm("qwen3");
+  EXPECT_TRUE(formats.tool_call_parser.empty());
+  EXPECT_TRUE(formats.reasoning_parser.empty());
+}
+
 TEST(XllmChatParseBridgeTest, ResolvesGlm5AutoParsersFromModelConfig) {
   for (const std::string model_type : {"glm_moe_dsa", "glm_moe_dsa_mtp"}) {
     auto formats =
@@ -111,6 +125,28 @@ TEST(XllmChatParseBridgeTest,
                                             true);
 
   EXPECT_TRUE(result.text.empty());
+  ASSERT_TRUE(result.tool_calls.has_value());
+  ASSERT_EQ(result.tool_calls->size(), 1);
+  EXPECT_EQ(result.tool_calls->Get(0).function().name(), "Write");
+  expect_write_tool_call(result.tool_calls->Get(0).function().arguments());
+  EXPECT_EQ(result.finish_reason, "tool_calls");
+}
+
+TEST(XllmChatParseBridgeTest,
+     ParsesDeepSeekV4OutputUsingDefaultFormatsWithClientAlias) {
+  auto formats = resolve_chat_parser_formats_with_xllm("deepseek_v4");
+  auto result = parse_chat_output_with_xllm(
+      "need a file</think>" + make_deepseek_v4_tool_call(),
+      make_tools(),
+      "client-model-alias",
+      "stop",
+      formats.tool_call_parser,
+      formats.reasoning_parser,
+      true);
+
+  EXPECT_TRUE(result.text.empty());
+  ASSERT_TRUE(result.reasoning_content.has_value());
+  EXPECT_EQ(result.reasoning_content.value(), "need a file");
   ASSERT_TRUE(result.tool_calls.has_value());
   ASSERT_EQ(result.tool_calls->size(), 1);
   EXPECT_EQ(result.tool_calls->Get(0).function().name(), "Write");

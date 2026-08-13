@@ -134,12 +134,14 @@ BRPC_VALIDATE_GFLAG(target_tpot, brpc::NonNegativeInteger);
 DEFINE_string(reasoning_parser,
               "",
               "Specify the reasoning parser for handling reasoning "
-              "interactions(e.g. auto, glm45, glm47, qwen3, deepseek-r1).");
+              "interactions(e.g. auto, glm45, glm47, qwen3, deepseek-r1, "
+              "deepseek-v4). DeepSeek V4 defaults to deepseek-v4 when unset.");
 
 DEFINE_string(tool_call_parser,
               "",
               "Specify the parser for handling tool-call interactions(e.g. "
-              "auto, qwen25, qwen3, kimi_k2, deepseekv3, glm45, glm47).");
+              "auto, qwen25, qwen3, kimi_k2, deepseekv3, deepseekv4, glm45, "
+              "glm47). DeepSeek V4 defaults to deepseekv4 when unset.");
 
 DEFINE_int32(readiness_check_interval_s,
              3,
