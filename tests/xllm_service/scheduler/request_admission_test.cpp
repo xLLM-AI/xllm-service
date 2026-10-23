@@ -64,7 +64,7 @@ class SchedulerTestPeer final {
   static bool bind(Scheduler& scheduler,
                    const std::shared_ptr<Request>& request) {
     auto& manager = *scheduler.instance_mgr_;
-    if (!manager.bind_request_instance_incarnations(request)) {
+    if (!manager.bind_request_instances(request)) {
       return false;
     }
     manager.update_request_metrics(request, RequestAction::SCHEDULE);

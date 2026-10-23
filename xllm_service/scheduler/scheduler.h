@@ -40,7 +40,7 @@ class Scheduler final {
 
   bool schedule(std::shared_ptr<Request> request);
 
-  std::shared_ptr<brpc::Channel> get_channel(const std::string& target_name);
+  std::shared_ptr<brpc::Channel> get_channel(const Request& request);
 
   InstanceMetaInfo get_instance_info(const std::string& instance_name);
 

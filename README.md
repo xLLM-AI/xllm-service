@@ -82,6 +82,10 @@ cmake .. && make -j 8
 
 --- 
 
+### Session-aware routing
+
+Use `--load_balance_policy=SESSION_AWARE` to keep requests with the same `X-Session-ID` on their assigned instances. See [session routing configuration](docs/zh/session_aware_routing.md).
+
 ## 5. Contributing
 
 There are several ways you can contribute to xLLM:

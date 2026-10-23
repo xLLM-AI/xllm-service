@@ -231,7 +231,7 @@ bool InstanceMgr::get_next_instance_pair(Routing* routing) {
     return false;
   }
 
-  routing->decode_name.clear();
+  *routing = {};
   if (suspect_instances_.empty()) {
     // Fast path for the common case: no suspect instances, keep plain RR.
     next_prefill_index_ = next_prefill_index_ % prefill_index_.size();
@@ -296,10 +296,11 @@ std::vector<std::string> InstanceMgr::get_static_prefill_list(
   return prefill_list;
 }
 
-RoutingCandidates InstanceMgr::get_routing_candidates() const {
+RoutingCandidates InstanceMgr::get_routing_candidates(bool require_load) const {
   std::shared_lock<std::shared_mutex> inst_lock(cluster_mutex_);
   std::shared_lock<std::shared_mutex> metric_lock(metrics_mutex_);
-  const auto collect = [this](const std::vector<std::string>& index) {
+  const auto collect = [this,
+                        require_load](const std::vector<std::string>& index) {
     std::vector<RoutingCandidate> result;
     result.reserve(index.size());
     for (const auto& name : index) {
@@ -312,16 +313,18 @@ RoutingCandidates InstanceMgr::get_routing_candidates() const {
       // metrics. Instances without a first load report are not ready for CAR.
       const auto updated = updated_metrics_.find(name);
       const auto previous = load_metrics_.find(name);
-      if (updated == updated_metrics_.end() &&
-          previous == load_metrics_.end()) {
+      const LoadMetrics* reported =
+          updated != updated_metrics_.end() ? &updated->second
+          : previous != load_metrics_.end() ? &previous->second
+                                            : nullptr;
+      const bool valid_load = reported != nullptr &&
+                              std::isfinite(reported->gpu_cache_usage_perc) &&
+                              reported->gpu_cache_usage_perc >= 0 &&
+                              reported->gpu_cache_usage_perc <= 1;
+      if (require_load && !valid_load) {
         continue;
       }
-      const auto& load = updated != updated_metrics_.end() ? updated->second
-                                                           : previous->second;
-      if (!std::isfinite(load.gpu_cache_usage_perc) ||
-          load.gpu_cache_usage_perc < 0 || load.gpu_cache_usage_perc > 1) {
-        continue;
-      }
+      const LoadMetrics load = valid_load ? *reported : LoadMetrics{};
       const auto& info = instance->second;
       result.emplace_back(RoutingCandidate{name,
                                            info.incarnation_id,
@@ -373,72 +376,66 @@ void InstanceMgr::set_as_master() {
 }
 
 std::shared_ptr<brpc::Channel> InstanceMgr::get_channel(
-    const std::string& instance_name) {
+    const Request& request) {
   std::shared_lock<std::shared_mutex> lock(cluster_mutex_);
-  auto iter = cached_channels_.find(instance_name);
-  if (iter == cached_channels_.end()) {
+  // Validate and acquire under the same lock. A same-address replacement must
+  // not supply its Channel to a request bound to the previous registration.
+  if (!request_instances_match_locked(request)) {
     return nullptr;
   }
-  return iter->second;
+  const auto found = cached_channels_.find(request.routing.prefill_name);
+  return found == cached_channels_.end() ? nullptr : found->second;
 }
 
-bool InstanceMgr::bind_request_instance_incarnations(
+bool InstanceMgr::bind_request_instances(
     const std::shared_ptr<Request>& request) {
   std::shared_lock<std::shared_mutex> lock(cluster_mutex_);
-
-  // Bind the selected routing to a concrete incarnation before dispatch.
-  request->prefill_incarnation_id.clear();
-  request->decode_incarnation_id.clear();
-
-  if (!request->routing.prefill_name.empty()) {
-    auto prefill_it = instances_.find(request->routing.prefill_name);
-    if (prefill_it == instances_.end()) {
-      LOG(ERROR) << "Prefill instance is not registered when binding request: "
-                 << request->routing.prefill_name;
+  const auto bind = [this](const std::string& name,
+                           std::string& incarnation_id) {
+    if (name.empty()) {
+      incarnation_id.clear();
+      return true;
+    }
+    const auto found = instances_.find(name);
+    if (found == instances_.end() || !is_instance_schedulable(found->second) ||
+        (!incarnation_id.empty() &&
+         found->second.incarnation_id != incarnation_id)) {
       return false;
     }
-    if (!is_instance_schedulable(prefill_it->second)) {
-      LOG(ERROR) << "Prefill instance is not schedulable when binding request: "
-                 << request->routing.prefill_name << ", state: "
-                 << runtime_state_name(prefill_it->second.runtime_state);
-      return false;
-    }
-    request->prefill_incarnation_id = prefill_it->second.incarnation_id;
+    incarnation_id = found->second.incarnation_id;
+    return true;
+  };
+  std::string prefill = request->routing.prefill_incarnation_id;
+  std::string decode = request->routing.decode_incarnation_id;
+  if (!bind(request->routing.prefill_name, prefill) ||
+      !bind(request->routing.decode_name, decode)) {
+    return false;
   }
-
-  if (!request->routing.decode_name.empty()) {
-    auto decode_it = instances_.find(request->routing.decode_name);
-    if (decode_it == instances_.end()) {
-      LOG(ERROR) << "Decode instance is not registered when binding request: "
-                 << request->routing.decode_name;
-      return false;
-    }
-    if (!is_instance_schedulable(decode_it->second)) {
-      LOG(ERROR) << "Decode instance is not schedulable when binding request: "
-                 << request->routing.decode_name << ", state: "
-                 << runtime_state_name(decode_it->second.runtime_state);
-      return false;
-    }
-    request->decode_incarnation_id = decode_it->second.incarnation_id;
-  }
-
+  request->routing.prefill_incarnation_id = std::move(prefill);
+  request->routing.decode_incarnation_id = std::move(decode);
   return true;
+}
+
+bool InstanceMgr::request_instances_match_locked(const Request& request) const {
+  const auto matches = [this](const std::string& name,
+                              const std::string& incarnation_id) {
+    if (name.empty()) {
+      return incarnation_id.empty();
+    }
+    const auto found = instances_.find(name);
+    return found != instances_.end() &&
+           is_instance_schedulable(found->second) &&
+           found->second.incarnation_id == incarnation_id;
+  };
+  return matches(request.routing.prefill_name,
+                 request.routing.prefill_incarnation_id) &&
+         matches(request.routing.decode_name,
+                 request.routing.decode_incarnation_id);
 }
 
 bool InstanceMgr::request_instances_match(const Request& request) const {
   std::shared_lock<std::shared_mutex> lock(cluster_mutex_);
-  const auto matches = [this](const std::string& name,
-                              const std::string& incarnation_id) {
-    if (name.empty()) {
-      return true;
-    }
-    auto it = instances_.find(name);
-    return it != instances_.end() && is_instance_schedulable(it->second) &&
-           it->second.incarnation_id == incarnation_id;
-  };
-  return matches(request.routing.prefill_name,
-                 request.prefill_incarnation_id) &&
-         matches(request.routing.decode_name, request.decode_incarnation_id);
+  return request_instances_match_locked(request);
 }
 
 bool InstanceMgr::record_instance_heartbeat(const std::string& instance_name,
@@ -843,7 +840,7 @@ void InstanceMgr::update_request_metrics(
   if (prefill_it != request_metrics_.end() &&
       prefill_instance != instances_.end() &&
       prefill_instance->second.incarnation_id ==
-          request->prefill_incarnation_id) {
+          request->routing.prefill_incarnation_id) {
     apply_prefill_request_metrics(*request, action, prefill_it->second);
   }
   auto decode_it = request_metrics_.find(request->routing.decode_name);
@@ -851,7 +848,7 @@ void InstanceMgr::update_request_metrics(
   if (decode_it != request_metrics_.end() &&
       decode_instance != instances_.end() &&
       decode_instance->second.incarnation_id ==
-          request->decode_incarnation_id) {
+          request->routing.decode_incarnation_id) {
     apply_decode_request_metrics(*request, action, decode_it->second);
     if (decode_it->second.decode_request_num == 0) {
       flip_decode_to_prefill(request->routing.decode_name);

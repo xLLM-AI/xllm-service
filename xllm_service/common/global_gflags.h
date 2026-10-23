@@ -55,6 +55,12 @@ DECLARE_string(etcd_namespace);
 
 DECLARE_string(load_balance_policy);
 
+DECLARE_string(session_fallback_policy);
+
+DECLARE_int32(session_affinity_ttl_s);
+
+DECLARE_int32(session_affinity_max_entries);
+
 DECLARE_double(car_host_hit_weight);
 
 DECLARE_double(car_prefill_lambda);

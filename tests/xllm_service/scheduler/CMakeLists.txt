@@ -39,3 +39,9 @@ cc_test(
     :scheduler
     GTest::gtest_main
 )
+
+cc_test(
+  NAME session_aware_policy_test
+  SRCS session_aware_policy_test.cpp
+  DEPS :loadbalance_policy :xllm_http_service GTest::gtest_main
+)

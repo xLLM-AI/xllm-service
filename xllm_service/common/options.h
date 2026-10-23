@@ -71,6 +71,12 @@ class Options {
   // scheduler options
   PROPERTY(std::string, load_balance_policy);
 
+  PROPERTY(std::string, session_fallback_policy) = "RR";
+
+  PROPERTY(int32_t, session_affinity_ttl_s) = 300;
+
+  PROPERTY(int32_t, session_affinity_max_entries) = 65536;
+
   PROPERTY(double, car_host_hit_weight) = 0.5;
 
   PROPERTY(double, car_prefill_lambda) = 0.5;

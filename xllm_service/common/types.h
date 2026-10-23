@@ -25,17 +25,20 @@ limitations under the License.
 #include <unordered_set>
 #include <vector>
 
-#include "nlohmann/json.hpp"
-
 namespace xllm_service {
 
 constexpr const char* ETCD_MASTER_SERVICE_KEY = "XLLM:SERVICE:MASTER";
 constexpr const char* ETCD_XSERVICE_KEY_PREFIX = "XLLM:SERVICE:";
 constexpr const char* ETCD_MASTER_SERVICE_NAME = "MASTER";
 
-struct Routing {
+class Routing final {
+ public:
   std::string prefill_name;
   std::string decode_name;
+  // Service-local identities captured before dispatch, not serialized into
+  // engine requests. Session bindings require nonempty IDs for both targets.
+  std::string prefill_incarnation_id;
+  std::string decode_incarnation_id;
 
   nlohmann::json serialize_to_json() const {
     nlohmann::json json_val;

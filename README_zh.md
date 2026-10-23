@@ -73,6 +73,10 @@ cmake .. && make -j 8
 ```
 
 ---
+### Session aware 路由
+
+设置 `--load_balance_policy=SESSION_AWARE`，让携带相同 `X-Session-ID` 的请求复用已绑定实例，配置与行为见 [Session aware 路由](docs/zh/session_aware_routing.md)。
+
 ## 5. 成为贡献者
 您可以通过以下方法为 xLLM-Service 作出贡献:
 

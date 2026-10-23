@@ -88,7 +88,20 @@ DEFINE_int32(idle_timeout_s,
 
 DEFINE_string(load_balance_policy,
               "RR",
-              "Disaggregated prefill-decode policy.");
+              "Routing policy: RR, CAR, SLO_AWARE or SESSION_AWARE.");
+
+DEFINE_string(session_fallback_policy,
+              "RR",
+              "SESSION_AWARE placement for unbound requests: RR or CAR.");
+
+DEFINE_int32(
+    session_affinity_ttl_s,
+    300,
+    "SESSION_AWARE idle timeout after active requests finish, in seconds.");
+
+DEFINE_int32(session_affinity_max_entries,
+             65536,
+             "Maximum SESSION_AWARE bindings per service process; evicts LRU.");
 
 DEFINE_double(car_host_hit_weight,
               0.5,

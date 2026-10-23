@@ -38,6 +38,7 @@ limitations under the License.
 #include "completion.pb.h"
 #include "http_service/anthropic_adapter.h"
 #include "http_service/chat_json_parser.h"
+#include "scheduler/loadbalance_policy/session_aware_policy.h"
 #include "scheduler/scheduler.h"
 #include "xllm_rpc_service.pb.h"
 #include "xllm_service.pb.h"
@@ -182,13 +183,19 @@ void handle_first_send_request(brpc::Controller* cntl,
                                std::shared_ptr<T> call_data,
                                Scheduler* scheduler,
                                std::string service_request_id,
-                               bool stream) {
+                               std::shared_ptr<SessionLease> session_lease) {
   std::unique_ptr<brpc::Controller> cntl_guard(cntl);
   if (cntl->Failed()) {
     LOG(ERROR) << "Fail to send stream generation, " << cntl->ErrorText();
     call_data->finish_with_error(cntl->ErrorText());
     scheduler->finish_request(service_request_id, /*error*/ true);
+    if (session_lease != nullptr) {
+      session_lease->finish(/*failed=*/true);
+    }
     return;
+  }
+  if (session_lease != nullptr) {
+    session_lease->commit();
   }
 }
 
@@ -196,8 +203,11 @@ template <typename T>
 class CustomProgressiveReader : public brpc::ProgressiveReader {
  public:
   explicit CustomProgressiveReader(brpc::Controller* redirect_cntl,
-                                   std::shared_ptr<T> call_data)
-      : redirect_cntl_(redirect_cntl), call_data_(call_data) {}
+                                   std::shared_ptr<T> call_data,
+                                   std::shared_ptr<SessionLease> session_lease)
+      : redirect_cntl_(redirect_cntl),
+        call_data_(std::move(call_data)),
+        session_lease_(std::move(session_lease)) {}
 
   virtual ~CustomProgressiveReader() { delete redirect_cntl_; }
 
@@ -217,11 +227,18 @@ class CustomProgressiveReader : public brpc::ProgressiveReader {
   // - otherwise: socket was broken or OnReadOnePart() failed.
   // This method will be called once and only once. No other methods will
   // be called after. User can release the memory of this object inside.
-  virtual void OnEndOfMessage(const butil::Status& status) { delete this; }
+  void OnEndOfMessage(const butil::Status& status) override {
+    if (session_lease_ != nullptr) {
+      session_lease_->finish(/*failed=*/!status.ok() &&
+                             !call_data_->is_disconnected());
+    }
+    delete this;
+  }
 
  private:
   brpc::Controller* redirect_cntl_ = nullptr;
   std::shared_ptr<T> call_data_;
+  std::shared_ptr<SessionLease> session_lease_;
 };
 
 // Done callback for a streaming vLLM forward: once the response header has
@@ -231,16 +248,26 @@ class CustomProgressiveReader : public brpc::ProgressiveReader {
 template <typename T>
 void handle_vllm_stream_done(brpc::Controller* redirect_cntl,
                              std::shared_ptr<T> call_data,
-                             std::shared_ptr<brpc::Channel> channel) {
-  if (redirect_cntl->Failed()) {
+                             std::shared_ptr<brpc::Channel> channel,
+                             std::shared_ptr<SessionLease> session_lease) {
+  const bool http_error = redirect_cntl->http_response().status_code() >= 400;
+  if (session_lease != nullptr && (redirect_cntl->Failed() || http_error)) {
+    session_lease->finish(/*failed=*/!call_data->is_disconnected());
+  }
+  if (redirect_cntl->Failed() && !http_error) {
     LOG(ERROR) << "Fail to forward to vLLM (stream): "
                << redirect_cntl->ErrorText();
     call_data->finish_with_error(redirect_cntl->ErrorText());
     delete redirect_cntl;
     return;
   }
-  redirect_cntl->ReadProgressiveAttachmentBy(
-      new CustomProgressiveReader<T>(redirect_cntl, call_data));
+  if (session_lease != nullptr && !http_error) {
+    session_lease->commit();
+  }
+  // The downstream stream has already started. Relay HTTP error bodies too;
+  // invalidating affinity must not discard the backend's structured error.
+  redirect_cntl->ReadProgressiveAttachmentBy(new CustomProgressiveReader<T>(
+      redirect_cntl, call_data, std::move(session_lease)));
 }
 
 // Done callback for a non-streaming vLLM forward. Delegates to the shared
@@ -249,7 +276,17 @@ void handle_vllm_stream_done(brpc::Controller* redirect_cntl,
 template <typename T>
 void handle_vllm_non_stream_done(brpc::Controller* redirect_cntl,
                                  std::shared_ptr<T> call_data,
-                                 std::shared_ptr<brpc::Channel> channel) {
+                                 std::shared_ptr<brpc::Channel> channel,
+                                 std::shared_ptr<SessionLease> session_lease) {
+  if (session_lease != nullptr) {
+    const bool failed = redirect_cntl->Failed() ||
+                        redirect_cntl->http_response().status_code() >= 400;
+    const bool cancelled = call_data->is_disconnected();
+    if (!failed && !cancelled) {
+      session_lease->commit();
+    }
+    session_lease->finish(failed && !cancelled);
+  }
   handle_non_stream_response(redirect_cntl, call_data);
 }
 
@@ -260,13 +297,17 @@ void handle_vllm_non_stream_done(brpc::Controller* redirect_cntl,
 template <typename T>
 void handle_vllm(std::shared_ptr<T> call_data,
                  Scheduler* scheduler,
-                 const std::string& target_name,
+                 std::shared_ptr<Request> request,
                  const std::string& path,
                  bool is_post,
                  const std::string& body,
                  bool stream) {
-  auto channel = scheduler->get_channel(target_name);
+  const auto& target_name = request->routing.prefill_name;
+  auto channel = scheduler->get_channel(*request);
   if (channel == nullptr) {
+    if (request->session_lease != nullptr) {
+      request->session_lease->finish(/*failed=*/true);
+    }
     LOG(ERROR) << "No channel for vLLM instance: " << target_name;
     call_data->finish_with_error("vLLM backend instance is not available.");
     return;
@@ -283,12 +324,20 @@ void handle_vllm(std::shared_ptr<T> call_data,
 
   if (stream) {
     redirect_cntl->response_will_be_read_progressively();
-    google::protobuf::Closure* done = brpc::NewCallback(
-        &handle_vllm_stream_done<T>, redirect_cntl, call_data, channel);
+    google::protobuf::Closure* done =
+        brpc::NewCallback(&handle_vllm_stream_done<T>,
+                          redirect_cntl,
+                          call_data,
+                          channel,
+                          request->session_lease);
     channel->CallMethod(nullptr, redirect_cntl, nullptr, nullptr, done);
   } else {
-    google::protobuf::Closure* done = brpc::NewCallback(
-        &handle_vllm_non_stream_done<T>, redirect_cntl, call_data, channel);
+    google::protobuf::Closure* done =
+        brpc::NewCallback(&handle_vllm_non_stream_done<T>,
+                          redirect_cntl,
+                          call_data,
+                          channel,
+                          request->session_lease);
     channel->CallMethod(nullptr, redirect_cntl, nullptr, nullptr, done);
   }
 }
@@ -342,10 +391,14 @@ void XllmHttpServiceImpl::handle(std::shared_ptr<T> call_data,
 
   // async redistribute the request and wait the response
   // TODO: optimize the thread pool to async mode.
-  auto& target_uri = request->routing.prefill_name;
-  brpc::Channel* channel_ptr = scheduler_->get_channel(target_uri).get();
+  auto channel = scheduler_->get_channel(*request);
+  if (channel == nullptr) {
+    scheduler_->finish_request(request->service_request_id, /*error=*/true);
+    call_data->finish_with_error("Selected instance is not available.");
+    return;
+  }
   // use stub
-  xllm::proto::XllmAPIService_Stub stub(channel_ptr);
+  xllm::proto::XllmAPIService_Stub stub(channel.get());
   // xllm::proto::Status* resp_pb = new xllm::proto::Status();
   brpc::Controller* redirect_cntl = new brpc::Controller();
   google::protobuf::Closure* done =
@@ -354,7 +407,7 @@ void XllmHttpServiceImpl::handle(std::shared_ptr<T> call_data,
                         call_data,
                         scheduler_,
                         request->service_request_id,
-                        request->stream);
+                        request->session_lease);
 
   if constexpr (std::is_same_v<T, CompletionCallData>) {
     stub.Completions(redirect_cntl, &req_pb, nullptr, done);
@@ -372,9 +425,15 @@ void XllmHttpServiceImpl::handle(std::shared_ptr<T> call_data,
 template <typename T>
 std::shared_ptr<Request> XllmHttpServiceImpl::generate_request(
     T* req_pb,
-    const std::string& method) {
+    const std::string& method,
+    const brpc::Controller& controller) {
   auto request = std::make_shared<Request>();
   request->model = req_pb->model();
+  const std::string* session_id =
+      controller.http_request().GetHeader("X-Session-ID");
+  if (session_id != nullptr) {
+    request->session_id = *session_id;
+  }
 
   // TODO: add `created_time` fileds etc.
   // create xllm_service request_id: service_request_id
@@ -460,7 +519,7 @@ void XllmHttpServiceImpl::get_serving_models(
           .backend_type == "vllm") {
     handle_vllm(call_data,
                 scheduler_,
-                service_request->routing.prefill_name,
+                service_request,
                 "/v1/models",
                 /*is_post=*/false,
                 /*body=*/"",
@@ -468,10 +527,12 @@ void XllmHttpServiceImpl::get_serving_models(
     return;
   }
 
-  brpc::Channel* channel_ptr =
-      scheduler_->get_channel(service_request->routing.prefill_name).get();
-
-  xllm::proto::XllmAPIService_Stub stub(channel_ptr);
+  auto channel = scheduler_->get_channel(*service_request);
+  if (channel == nullptr) {
+    call_data->finish_with_error("Selected instance is not available.");
+    return;
+  }
+  xllm::proto::XllmAPIService_Stub stub(channel.get());
   brpc::Controller* redirect_cntl = new brpc::Controller();
   auto* resp_pb = new xllm::proto::ModelListResponse();
   google::protobuf::Closure* done_callback = brpc::NewCallback(
@@ -511,7 +572,7 @@ void XllmHttpServiceImpl::Completions(
     return;
   }
 
-  auto service_request = generate_request(req_pb, "/v1/completions");
+  auto service_request = generate_request(req_pb, "/v1/completions", *cntl);
 
   if (!req_pb->prompt().empty()) {
     service_request->prompt = req_pb->prompt();
@@ -534,7 +595,7 @@ void XllmHttpServiceImpl::Completions(
         cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
     handle_vllm(call_data,
                 scheduler_,
-                service_request->routing.prefill_name,
+                service_request,
                 "/v1/completions",
                 /*is_post=*/true,
                 attachment,
@@ -587,7 +648,7 @@ void XllmHttpServiceImpl::ChatCompletions(
   std::string attachment;
   cntl->request_attachment().copy_to(&attachment, content_len, 0);
 
-  auto chat_json = normalize_chat_json(std::move(attachment));
+  auto chat_json = normalize_chat_json(attachment);
   if (!chat_json.ok) {
     cntl->SetFailed(chat_json.error);
     LOG(ERROR) << "normalize chat json failed: " << chat_json.error;
@@ -604,7 +665,8 @@ void XllmHttpServiceImpl::ChatCompletions(
     return;
   }
 
-  auto service_request = generate_request(req_pb, "/v1/chat/completions");
+  auto service_request =
+      generate_request(req_pb, "/v1/chat/completions", *cntl);
 
   if (req_pb->messages_size() > 0) {
     service_request->messages.reserve(req_pb->messages_size());
@@ -659,7 +721,7 @@ void XllmHttpServiceImpl::ChatCompletions(
         cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
     handle_vllm(call_data,
                 scheduler_,
-                service_request->routing.prefill_name,
+                service_request,
                 "/v1/chat/completions",
                 /*is_post=*/true,
                 attachment,
@@ -729,7 +791,7 @@ void XllmHttpServiceImpl::AnthropicMessages(
   }
   req_pb->set_request_id(new_anthropic_id());
 
-  auto service_request = generate_request(req_pb, "/v1/messages");
+  auto service_request = generate_request(req_pb, "/v1/messages", *cntl);
   if (req_pb->has_chat_template_kwargs()) {
     service_request->chat_template_kwargs =
         proto_struct_to_json(req_pb->chat_template_kwargs());

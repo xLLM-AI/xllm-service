@@ -27,6 +27,7 @@ limitations under the License.
 #include "loadbalance_policy/cache_aware_routing.h"
 #include "loadbalance_policy/round_robin.h"
 #include "loadbalance_policy/slo_aware_policy.h"
+#include "scheduler/loadbalance_policy/session_aware_policy.h"
 #include "scheduler/request_metrics.h"
 #include "scheduler/request_output.h"
 #include "tokenizer/tokenizer_factory.h"
@@ -121,7 +122,16 @@ Scheduler::Scheduler(const Options& options) : options_(options) {
       options, etcd_client_, is_master_service_, this);
   start_kv_event_discovery();
 
-  if (options.load_balance_policy() == "CAR") {
+  const bool session_aware = options.load_balance_policy() == "SESSION_AWARE";
+  if (session_aware) {
+    CHECK(options.session_fallback_policy() == "RR" ||
+          options.session_fallback_policy() == "CAR")
+        << "session_fallback_policy must be RR or CAR";
+  }
+  const std::string placement = session_aware
+                                    ? options.session_fallback_policy()
+                                    : options.load_balance_policy();
+  if (placement == "CAR") {
     lb_policy_ =
         std::make_unique<CacheAwareRouting>(instance_mgr_,
                                             kv_directory_.get(),
@@ -131,6 +141,14 @@ Scheduler::Scheduler(const Options& options) : options_(options) {
     lb_policy_ = std::make_unique<SloAwarePolicy>(options, instance_mgr_);
   } else {
     lb_policy_ = std::make_unique<RoundRobin>(instance_mgr_);
+  }
+
+  if (session_aware) {
+    lb_policy_ = std::make_unique<SessionAwarePolicy>(
+        instance_mgr_,
+        std::move(lb_policy_),
+        options.session_affinity_ttl_s(),
+        options.session_affinity_max_entries());
   }
 
   if (is_master_service_) {
@@ -225,8 +243,8 @@ bool Scheduler::schedule(std::shared_ptr<Request> request) {
     return false;
   }
 
-  if (!instance_mgr_->bind_request_instance_incarnations(request)) {
-    LOG(ERROR) << "Failed to bind request to instance incarnation ids. "
+  if (!instance_mgr_->bind_request_instances(request)) {
+    LOG(ERROR) << "Failed to bind request to instance identities. "
                << request->routing.debug_string();
     return false;
   }
@@ -240,9 +258,8 @@ bool Scheduler::schedule(std::shared_ptr<Request> request) {
   return true;
 }
 
-std::shared_ptr<brpc::Channel> Scheduler::get_channel(
-    const std::string& target_name) {
-  return instance_mgr_->get_channel(target_name);
+std::shared_ptr<brpc::Channel> Scheduler::get_channel(const Request& request) {
+  return instance_mgr_->get_channel(request);
 }
 
 void Scheduler::update_master_service_heartbeat() {
@@ -503,6 +520,9 @@ void Scheduler::finish_request(const std::string& service_request_id,
     }
     remote_requests_output_thread_map_.erase(service_request_id);
   }
+  if (request != nullptr && request->session_lease != nullptr) {
+    request->session_lease->finish(error);
+  }
 }
 
 void Scheduler::clear_requests_on_failed_instance(
@@ -516,12 +536,12 @@ void Scheduler::clear_requests_on_failed_instance(
       const bool clear_prefill =
           ((type == InstanceType::DEFAULT || type == InstanceType::PREFILL) &&
            request->routing.prefill_name == instance_name &&
-           request->prefill_incarnation_id == incarnation_id &&
+           request->routing.prefill_incarnation_id == incarnation_id &&
            !request->prefill_stage_finished);
       const bool clear_decode =
           (type == InstanceType::DECODE &&
            request->routing.decode_name == instance_name &&
-           request->decode_incarnation_id == incarnation_id);
+           request->routing.decode_incarnation_id == incarnation_id);
       if (!clear_prefill && !clear_decode) {
         continue;
       }
@@ -568,6 +588,9 @@ bool Scheduler::handle_generation(llm::RequestOutput request_output) {
       requests_.erase(it);
       instance_mgr_->update_request_metrics(request, RequestAction::CANCEL);
       remote_requests_output_thread_map_.erase(service_request_id);
+      if (request->session_lease != nullptr) {
+        request->session_lease->finish(/*failed=*/false);
+      }
       return false;
     } else if (!status_error) {
       const bool first_token =
@@ -590,9 +613,22 @@ bool Scheduler::handle_generation(llm::RequestOutput request_output) {
        service_request_id = std::move(service_request_id),
        request = std::move(request),
        request_output = std::move(request_output)]() mutable {
+        if (request->session_lease != nullptr &&
+            (!request_output.status.has_value() ||
+             request_output.status->ok())) {
+          // Real output may arrive before the Prefill dispatch ACK.
+          request->session_lease->commit();
+        }
         const std::optional<bool> finished =
             deliver_request_output(*request, request_output);
         if (finished.has_value()) {
+          if (request->session_lease != nullptr) {
+            const bool failed =
+                request_output.status.has_value() &&
+                !request_output.status->ok() &&
+                request_output.status->code() != llm::StatusCode::CANCELLED;
+            request->session_lease->finish(failed);
+          }
           finish_request(service_request_id, *finished);
         }
       });

@@ -225,6 +225,9 @@ int main(int argc, char* argv[]) {
       .etcd_addr(FLAGS_etcd_addr)
       .etcd_namespace(FLAGS_etcd_namespace)
       .load_balance_policy(FLAGS_load_balance_policy)
+      .session_fallback_policy(FLAGS_session_fallback_policy)
+      .session_affinity_ttl_s(FLAGS_session_affinity_ttl_s)
+      .session_affinity_max_entries(FLAGS_session_affinity_max_entries)
       .car_host_hit_weight(FLAGS_car_host_hit_weight)
       .car_prefill_lambda(FLAGS_car_prefill_lambda)
       .service_name(xllm_service::utils::get_local_ip() + ":" +
