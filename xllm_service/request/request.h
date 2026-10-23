@@ -71,6 +71,9 @@ struct Request {
 
   // the estimated TTFT obtained from the TTFT predictor
   int64_t estimated_ttft = 0;
+  // ds_load_balance reserves both peers atomically during selection.
+  bool ds_load_balance_reserved = false;
+  int32_t store_cached_tokens = 0;
 
   // output callback
   OutputCallback output_callback;

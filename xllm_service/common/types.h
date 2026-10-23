@@ -151,6 +151,11 @@ enum class RequestAction : int32_t {
 };
 
 // Record the request metrics of the instance
+struct PrefillCacheHint {
+  std::string incarnation_id;
+  int32_t cached_tokens = 0;
+};
+
 struct RequestMetrics {
   RequestMetrics()
       : prefill_request_num(0),

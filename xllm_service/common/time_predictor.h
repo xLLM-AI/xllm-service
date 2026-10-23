@@ -16,6 +16,11 @@ limitations under the License.
 #pragma once
 
 #include <Eigen/Dense>
+#include <cstdint>
+#include <optional>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 namespace xllm_service {
 
@@ -32,9 +37,19 @@ class TimePredictor final {
 
   double predict_tpot(int32_t total_length, int32_t batch_size);
 
+  // Milliseconds of compute remaining after reusing a causal text prefix.
+  // An absent/invalid profiling fit is not a zero-cost engine.
+  std::optional<double> predict_prefill_time(int32_t length,
+                                             int32_t cached_tokens);
+
  private:
   Eigen::VectorXd ttft_coefficients_;
   Eigen::VectorXd tpot_coefficients_;
+  // A separately constrained fit keeps routing costs positive and monotonic
+  // without changing the existing SLO predictor's TTFT/TPOT behavior.
+  Eigen::Vector3d prefill_coefficients_ = Eigen::Vector3d::Zero();
+  double prefill_length_scale_ = 1.0;
+  bool has_prefill_profile_ = false;
 };
 
 }  // namespace xllm_service

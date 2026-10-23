@@ -1,5 +1,11 @@
 include(cc_library)
 
+option(USE_MOONCAKE_PREFIX_LOOKUP
+       "Enable Mooncake Store prefix metadata queries" OFF)
+if(USE_MOONCAKE_PREFIX_LOOKUP)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/mooncake.cmake)
+endif()
+
 add_subdirectory(cpprestsdk)
 set(CPPREST_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cpprestsdk/Release/include)
 set(CPPREST_LIB cpprest)

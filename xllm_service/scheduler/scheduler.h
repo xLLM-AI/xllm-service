@@ -81,7 +81,7 @@ class Scheduler final {
   // Returns true only for the first successful output completing Prefill.
   // The caller holds request_mutex_ while changing request progress.
   bool update_request_metrics(const std::shared_ptr<Request>& request,
-                              bool finished_on_prefill_instance);
+                              const llm::RequestOutput& output);
 
   // update token latency metrics
   void update_token_latency_metrics(const std::shared_ptr<Request>& request,

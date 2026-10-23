@@ -237,6 +237,8 @@ int main(int argc, char* argv[]) {
       .enable_request_trace(FLAGS_enable_request_trace)
       .block_size(FLAGS_block_size)
       .kv_events_config_file(FLAGS_kv_events_config_file)
+      .mooncake_prefix_config_file(FLAGS_mooncake_prefix_config_file)
+      .prefill_time_profile_file(FLAGS_prefill_time_profile_file)
       .tokenizer_path(FLAGS_tokenizer_path)
       .default_backend_type(FLAGS_default_backend_type)
       .vllm_http_timeout_ms(FLAGS_vllm_http_timeout_ms)

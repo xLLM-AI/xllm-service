@@ -27,6 +27,7 @@ limitations under the License.
 #include "loadbalance_policy/cache_aware_routing.h"
 #include "loadbalance_policy/round_robin.h"
 #include "loadbalance_policy/slo_aware_policy.h"
+#include "scheduler/loadbalance_policy/ds_load_balance.h"
 #include "scheduler/request_metrics.h"
 #include "scheduler/request_output.h"
 #include "tokenizer/tokenizer_factory.h"
@@ -127,6 +128,12 @@ Scheduler::Scheduler(const Options& options) : options_(options) {
                                             kv_directory_.get(),
                                             options.car_host_hit_weight(),
                                             options.car_prefill_lambda());
+  } else if (options.load_balance_policy() == "ds_load_balance") {
+    CHECK_NE(options.default_backend_type(), "vllm")
+        << "ds_load_balance requires service-side tokenization";
+    lb_policy_ = std::make_unique<DsLoadBalance>(
+        instance_mgr_,
+        create_mooncake_prefix_lookup(options.mooncake_prefix_config_file()));
   } else if (options.load_balance_policy() == "SLO_AWARE") {
     lb_policy_ = std::make_unique<SloAwarePolicy>(options, instance_mgr_);
   } else {
@@ -225,7 +232,8 @@ bool Scheduler::schedule(std::shared_ptr<Request> request) {
     return false;
   }
 
-  if (!instance_mgr_->bind_request_instance_incarnations(request)) {
+  if (!request->ds_load_balance_reserved &&
+      !instance_mgr_->bind_request_instance_incarnations(request)) {
     LOG(ERROR) << "Failed to bind request to instance incarnation ids. "
                << request->routing.debug_string();
     return false;
@@ -466,7 +474,11 @@ bool Scheduler::record_new_request(
 bool Scheduler::publish_request(std::shared_ptr<Request> request) {
   std::lock_guard<std::mutex> admission_lock(admission_mutex_);
   std::lock_guard<std::mutex> request_lock(request_mutex_);
-  if (requests_.find(request->service_request_id) != requests_.end()) {
+  const auto existing = requests_.find(request->service_request_id);
+  if (existing != requests_.end()) {
+    if (existing->second != request) {
+      instance_mgr_->update_request_metrics(request, RequestAction::CANCEL);
+    }
     LOG(ERROR) << "The request ID already exists. Requests with the same ID "
                   "are not allowed. "
                << request->service_request_id;
@@ -541,8 +553,6 @@ void Scheduler::clear_requests_on_failed_instance(
 }
 
 bool Scheduler::handle_generation(llm::RequestOutput request_output) {
-  const bool finished_on_prefill_instance =
-      request_output.finished_on_prefill_instance;
   std::string service_request_id = request_output.service_request_id;
   const bool status_error =
       request_output.status.has_value() && !request_output.status.value().ok();
@@ -570,9 +580,11 @@ bool Scheduler::handle_generation(llm::RequestOutput request_output) {
       remote_requests_output_thread_map_.erase(service_request_id);
       return false;
     } else if (!status_error) {
-      const bool first_token =
-          update_request_metrics(request, finished_on_prefill_instance);
-      update_token_latency_metrics(request, first_token);
+      const int64_t previous_tokens = request->num_generated_tokens;
+      const bool first_token = update_request_metrics(request, request_output);
+      if (first_token || request->num_generated_tokens > previous_tokens) {
+        update_token_latency_metrics(request, first_token);
+      }
     }
     auto thread_it =
         remote_requests_output_thread_map_.find(service_request_id);
@@ -601,13 +613,14 @@ bool Scheduler::handle_generation(llm::RequestOutput request_output) {
 }
 
 bool Scheduler::update_request_metrics(const std::shared_ptr<Request>& request,
-                                       bool finished_on_prefill_instance) {
-  const bool first_token =
-      record_generation(*request, finished_on_prefill_instance);
-  instance_mgr_->update_request_metrics(
-      request,
-      first_token ? RequestAction::FINISH_PREFILL : RequestAction::GENERATE);
-  return first_token;
+                                       const llm::RequestOutput& output) {
+  const GenerationProgress progress = record_generation(*request, output);
+  instance_mgr_->update_request_metrics(request,
+                                        progress.finished_prefill
+                                            ? RequestAction::FINISH_PREFILL
+                                            : RequestAction::GENERATE,
+                                        progress.generated_tokens);
+  return progress.finished_prefill;
 }
 
 void Scheduler::update_token_latency_metrics(

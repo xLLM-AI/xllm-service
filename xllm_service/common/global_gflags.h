@@ -70,6 +70,8 @@ DECLARE_int32(lease_lost_heartbeat_timeout_ms);
 DECLARE_int32(block_size);
 
 DECLARE_string(kv_events_config_file);
+DECLARE_string(mooncake_prefix_config_file);
+DECLARE_string(prefill_time_profile_file);
 
 DECLARE_string(tokenizer_path);
 

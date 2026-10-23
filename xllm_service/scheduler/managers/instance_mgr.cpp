@@ -24,10 +24,13 @@ limitations under the License.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -56,6 +59,7 @@ std::string ETCD_LOADMETRICS_PREFIX = "XLLM:LOADMETRICS:";
 
 constexpr char kHealthPath[] = "/health";
 constexpr int64_t kDeleteProbeRetryBackoffMs = 100;
+constexpr long double kDecodeTokenBalanceSlack = 1.05L;
 
 uint64_t current_time_ms() {
   return static_cast<uint64_t>(
@@ -127,6 +131,20 @@ InstanceMgr::InstanceMgr(const Options& options,
       is_master_service_(is_master_service),
       etcd_client_(etcd_client),
       scheduler_(scheduler) {
+  if (!options_.prefill_time_profile_file().empty()) {
+    std::ifstream input(options_.prefill_time_profile_file());
+    CHECK(input.is_open()) << "Cannot open prefill time profile";
+    const auto profiles = nlohmann::json::parse(input, nullptr, false);
+    CHECK(profiles.is_object()) << "Expected instance-to-TTFT-profile mapping";
+    for (const auto& [name, data] : profiles.items()) {
+      auto points = data.get<std::vector<std::pair<int32_t, double>>>();
+      TimePredictor predictor(points, {});
+      CHECK(!points.empty() &&
+            predictor.predict_prefill_time(points.front().first, 0).has_value())
+          << "Invalid TTFT profile for " << name;
+      prefill_time_profiles_.emplace(name, std::move(points));
+    }
+  }
   auto handle_instance_metainfo =
       std::bind(&InstanceMgr::update_instance_metainfo,
                 this,
@@ -827,14 +845,21 @@ void InstanceMgr::clear_suspect_instance(const std::string& name,
 
 void InstanceMgr::update_request_metrics(
     const std::shared_ptr<Request>& request,
-    RequestAction action) {
-  // skip request metrics update if policy is not SLO_AWARE
-  if (options_.load_balance_policy() != "SLO_AWARE") {
+    RequestAction action,
+    int64_t generated_tokens) {
+  const bool ds_load_balance =
+      options_.load_balance_policy() == "ds_load_balance";
+  if (options_.load_balance_policy() != "SLO_AWARE" && !ds_load_balance) {
     return;
   }
 
   std::scoped_lock<std::shared_mutex, std::shared_mutex> lock(cluster_mutex_,
                                                               metrics_mutex_);
+
+  if (ds_load_balance && (!request->ds_load_balance_reserved ||
+                          action == RequestAction::SCHEDULE)) {
+    return;
+  }
 
   // An instance may disappear after KV handoff. Release the surviving peer's
   // reservation even when the failed peer's metrics have already been removed.
@@ -852,11 +877,156 @@ void InstanceMgr::update_request_metrics(
       decode_instance != instances_.end() &&
       decode_instance->second.incarnation_id ==
           request->decode_incarnation_id) {
-    apply_decode_request_metrics(*request, action, decode_it->second);
-    if (decode_it->second.decode_request_num == 0) {
+    apply_decode_request_metrics(
+        *request, action, decode_it->second, generated_tokens);
+    if (!ds_load_balance && decode_it->second.decode_request_num == 0) {
       flip_decode_to_prefill(request->routing.decode_name);
     }
   }
+  if (ds_load_balance && (action == RequestAction::CANCEL ||
+                          action == RequestAction::FINISH_DECODE)) {
+    request->ds_load_balance_reserved = false;
+  }
+}
+
+bool InstanceMgr::select_instance_pair_on_ds_load_balance(
+    const std::shared_ptr<Request>& request,
+    const std::unordered_map<std::string, PrefillCacheHint>& cache_hints) {
+  if (request->token_ids.empty() ||
+      request->token_ids.size() >
+          static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+    return false;
+  }
+  std::scoped_lock lock(cluster_mutex_, metrics_mutex_);
+  if (request->ds_load_balance_reserved) {
+    return false;
+  }
+  const int32_t length = static_cast<int32_t>(request->token_ids.size());
+  std::vector<std::string> decode_candidates;
+  decode_candidates.reserve(decode_index_.size());
+  long double total_decode_tokens = length;
+  for (size_t offset = 0; offset < decode_index_.size(); ++offset) {
+    const std::string& name =
+        decode_index_[(next_decode_index_ + offset) % decode_index_.size()];
+    const auto instance = instances_.find(name);
+    if (instance == instances_.end() ||
+        !is_instance_schedulable(instance->second) ||
+        instance->second.backend_type != "xllm") {
+      continue;
+    }
+    decode_candidates.emplace_back(name);
+    total_decode_tokens += request_metrics_.at(name).decode_token_num;
+  }
+  // Adapt DualPath's within-group rule to one incoming request. Below the
+  // post-admission token threshold, balance sequences; otherwise balance KV
+  // length. Engine-side admission still enforces actual HBM capacity.
+  const long double token_threshold = decode_candidates.empty()
+                                          ? 0
+                                          : kDecodeTokenBalanceSlack *
+                                                total_decode_tokens /
+                                                decode_candidates.size();
+  std::string decode_name;
+  bool selected_high_tokens = true;
+  int64_t min_decode_requests = std::numeric_limits<int64_t>::max();
+  int64_t min_decode_tokens = std::numeric_limits<int64_t>::max();
+  for (const std::string& name : decode_candidates) {
+    const auto& metrics = request_metrics_.at(name);
+    const bool high_tokens =
+        static_cast<long double>(metrics.decode_token_num) + length >
+        token_threshold;
+    const bool better_same_category =
+        high_tokens
+            ? std::tie(metrics.decode_token_num, metrics.decode_request_num) <
+                  std::tie(min_decode_tokens, min_decode_requests)
+            : std::tie(metrics.decode_request_num, metrics.decode_token_num) <
+                  std::tie(min_decode_requests, min_decode_tokens);
+    if (decode_name.empty() || (!high_tokens && selected_high_tokens) ||
+        (high_tokens == selected_high_tokens && better_same_category)) {
+      decode_name = name;
+      selected_high_tokens = high_tokens;
+      min_decode_requests = metrics.decode_request_num;
+      min_decode_tokens = metrics.decode_token_num;
+    }
+  }
+
+  std::string prefill_name;
+  int32_t selected_cached_tokens = 0;
+  int64_t selected_cost = 0;
+  int64_t min_queued_time = std::numeric_limits<int64_t>::max();
+  for (size_t offset = 0; offset < prefill_index_.size(); ++offset) {
+    const std::string& name =
+        prefill_index_[(next_prefill_index_ + offset) % prefill_index_.size()];
+    const auto instance = instances_.find(name);
+    if (instance == instances_.end() ||
+        !is_instance_schedulable(instance->second) ||
+        instance->second.backend_type != "xllm" ||
+        (decode_name.empty() &&
+         instance->second.type != InstanceType::DEFAULT)) {
+      continue;
+    }
+    int32_t cached_tokens = 0;
+    const auto hint = cache_hints.find(name);
+    if (hint != cache_hints.end() &&
+        hint->second.incarnation_id == instance->second.incarnation_id) {
+      cached_tokens = std::clamp(hint->second.cached_tokens, 0, length - 1);
+    }
+    auto cost =
+        get_time_predictor(name).predict_prefill_time(length, cached_tokens);
+    // Reject an invalid fit rather than treating it as a free engine.
+    if (!cost.has_value() || *cost > 1e12) {
+      continue;
+    }
+    const int64_t reservation = static_cast<int64_t>(std::ceil(*cost));
+    const int64_t queued = request_metrics_.at(name).estimated_prefill_time;
+    if (queued < 0 ||
+        queued > std::numeric_limits<int64_t>::max() - reservation) {
+      continue;
+    }
+    if (queued < min_queued_time) {
+      min_queued_time = queued;
+      prefill_name = name;
+      selected_cost = reservation;
+      selected_cached_tokens = cached_tokens;
+    }
+  }
+  if (prefill_name.empty()) {
+    LOG(ERROR)
+        << "ds_load_balance needs a healthy prefill engine with valid TTFT "
+           "profiling (at least three distinct lengths) and a decode peer";
+    return false;
+  }
+  request->routing.prefill_name = prefill_name;
+  request->routing.decode_name = decode_name;
+  request->prefill_incarnation_id = instances_.at(prefill_name).incarnation_id;
+  request->decode_incarnation_id =
+      decode_name.empty() ? "" : instances_.at(decode_name).incarnation_id;
+  request->estimated_ttft = selected_cost;
+  request->store_cached_tokens = selected_cached_tokens;
+  request->ds_load_balance_reserved = true;
+  auto& prefill_metrics = request_metrics_.at(prefill_name);
+  prefill_metrics.estimated_prefill_time += selected_cost;
+  apply_prefill_request_metrics(
+      *request, RequestAction::SCHEDULE, prefill_metrics);
+  if (!decode_name.empty()) {
+    apply_decode_request_metrics(
+        *request, RequestAction::SCHEDULE, request_metrics_.at(decode_name));
+  }
+  next_prefill_index_ =
+      std::find(prefill_index_.begin(), prefill_index_.end(), prefill_name) -
+      prefill_index_.begin() + 1;
+  if (!decode_name.empty()) {
+    next_decode_index_ =
+        std::find(decode_index_.begin(), decode_index_.end(), decode_name) -
+        decode_index_.begin() + 1;
+  }
+  VLOG(1) << "ds_load_balance prefill=" << prefill_name
+          << " decode=" << decode_name
+          << " store_hit_tokens=" << selected_cached_tokens
+          << " compute_ms=" << selected_cost
+          << " queued_compute_ms=" << min_queued_time
+          << " decode_requests=" << min_decode_requests
+          << " decode_tokens=" << min_decode_tokens;
+  return true;
 }
 
 bool InstanceMgr::select_instance_pair_on_slo(
@@ -1225,8 +1395,12 @@ void InstanceMgr::add_instance_resources(const std::string& name,
                                          const InstanceMetaInfo& info) {
   std::unique_lock<std::shared_mutex> lock(metrics_mutex_);
 
+  const auto profile = prefill_time_profiles_.find(name);
+  const auto& ttft_data = profile == prefill_time_profiles_.end()
+                              ? info.ttft_profiling_data
+                              : profile->second;
   time_predictors_.insert_or_assign(
-      name, TimePredictor(info.ttft_profiling_data, info.tpot_profiling_data));
+      name, TimePredictor(ttft_data, info.tpot_profiling_data));
 
   request_metrics_.insert_or_assign(name, RequestMetrics());
 }

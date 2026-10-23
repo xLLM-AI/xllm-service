@@ -1,6 +1,12 @@
 include(cc_test)
 
 cc_test(
+  NAME ds_load_balance_test
+  SRCS ds_load_balance_test.cpp
+  DEPS :scheduler GTest::gtest_main
+)
+
+cc_test(
   NAME
     request_output_test
   SRCS

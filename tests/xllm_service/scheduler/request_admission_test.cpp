@@ -224,6 +224,9 @@ TEST_F(RequestAdmissionTest, QueuedGenerationPrecedesCancellation) {
   ASSERT_TRUE(SchedulerTestPeer::publish(*scheduler_, request));
   llm::RequestOutput output;
   output.service_request_id = request->service_request_id;
+  output.outputs.emplace_back();
+  output.outputs.back().index = 0;
+  output.outputs.back().token_ids = {42, 43, 44, 45};
   ASSERT_TRUE(scheduler_->handle_generation(std::move(output)));
   const auto ready = started.wait_for(std::chrono::seconds(5));
   if (ready != std::future_status::ready) {
@@ -233,6 +236,11 @@ TEST_F(RequestAdmissionTest, QueuedGenerationPrecedesCancellation) {
 
   // A successful Decode output closes Prefill. Fail Decode while that
   // output's callback is blocked, exercising the real cancellation route.
+  EXPECT_EQ(
+      SchedulerTestPeer::metrics(*scheduler_, "prefill").prefill_request_num,
+      0);
+  EXPECT_EQ(SchedulerTestPeer::metrics(*scheduler_, "decode").decode_token_num,
+            static_cast<int64_t>(request->token_ids.size()) + 4);
   SchedulerTestPeer::remove(*scheduler_, "decode");
   EXPECT_EQ(phase->load(), 1);
   EXPECT_TRUE(

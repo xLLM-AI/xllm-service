@@ -88,7 +88,20 @@ DEFINE_int32(idle_timeout_s,
 
 DEFINE_string(load_balance_policy,
               "RR",
-              "Disaggregated prefill-decode policy.");
+              "Disaggregated prefill-decode policy: RR, CAR, SLO_AWARE, "
+              "ds_load_balance.");
+
+DEFINE_string(
+    mooncake_prefix_config_file,
+    "",
+    "ds_load_balance Mooncake metadata lookup JSON. Empty disables Store "
+    "hints and estimates uncached prefill compute.");
+
+DEFINE_string(
+    prefill_time_profile_file,
+    "",
+    "ds_load_balance JSON mapping instance names to [tokens, latency_ms] "
+    "profiling pairs; overrides engine TTFT profiling when present.");
 
 DEFINE_double(car_host_hit_weight,
               0.5,

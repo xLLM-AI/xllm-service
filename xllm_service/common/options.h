@@ -78,6 +78,8 @@ class Options {
   PROPERTY(int32_t, block_size) = 128;
 
   PROPERTY(std::string, kv_events_config_file);
+  PROPERTY(std::string, mooncake_prefix_config_file);
+  PROPERTY(std::string, prefill_time_profile_file);
 
   PROPERTY(std::string, service_name);
 

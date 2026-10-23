@@ -13,10 +13,50 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "time_predictor.h"
+#include "common/time_predictor.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <unordered_set>
 
 namespace {
 constexpr int32_t kDegree = 2;
+
+Eigen::Vector3d fit_nonnegative_quadratic(const Eigen::MatrixXd& matrix,
+                                          const Eigen::VectorXd& target) {
+  Eigen::Vector3d best = Eigen::Vector3d::Zero();
+  double best_error = std::numeric_limits<double>::infinity();
+  // There are only three coefficients. Enumerating their active sets gives
+  // the nonnegative least-squares fit without an iterative solver.
+  for (int32_t mask = 1; mask < 8; ++mask) {
+    std::vector<int32_t> columns;
+    columns.reserve(kDegree + 1);
+    for (int32_t column = 0; column <= kDegree; ++column) {
+      if ((mask & (1 << column)) != 0) {
+        columns.emplace_back(column);
+      }
+    }
+    Eigen::MatrixXd active(matrix.rows(), columns.size());
+    for (size_t column = 0; column < columns.size(); ++column) {
+      active.col(column) = matrix.col(columns[column]);
+    }
+    const Eigen::VectorXd fitted = active.colPivHouseholderQr().solve(target);
+    if (!fitted.allFinite() || (fitted.array() < 0).any()) {
+      continue;
+    }
+    Eigen::Vector3d coefficients = Eigen::Vector3d::Zero();
+    for (size_t column = 0; column < columns.size(); ++column) {
+      coefficients(columns[column]) = fitted(column);
+    }
+    const double error = (matrix * coefficients - target).squaredNorm();
+    if (error < best_error) {
+      best_error = error;
+      best = coefficients;
+    }
+  }
+  return best;
+}
 }  // namespace
 
 namespace xllm_service {
@@ -25,7 +65,28 @@ TimePredictor::TimePredictor(
     const std::vector<std::pair<int32_t, double>>& ttft_profiling_data,
     const std::vector<std::tuple<int32_t, int32_t, double>>&
         tpot_profiling_data) {
-  if (!ttft_profiling_data.empty()) {
+  std::unordered_set<int32_t> lengths;
+  bool valid_profile = true;
+  for (const auto& [length, latency] : ttft_profiling_data) {
+    valid_profile &= length > 0 && std::isfinite(latency) && latency > 0;
+    lengths.emplace(length);
+  }
+  has_prefill_profile_ = valid_profile && lengths.size() >= kDegree + 1;
+  if (has_prefill_profile_) {
+    prefill_length_scale_ =
+        static_cast<double>(*std::max_element(lengths.begin(), lengths.end()));
+    const int32_t count = static_cast<int32_t>(ttft_profiling_data.size());
+    Eigen::MatrixXd matrix(count, kDegree + 1);
+    Eigen::VectorXd target(count);
+    for (int32_t index = 0; index < count; ++index) {
+      const auto& [length, latency] = ttft_profiling_data[index];
+      const double normalized = length / prefill_length_scale_;
+      matrix.row(index) << 1.0, normalized, normalized * normalized;
+      target(index) = latency;
+    }
+    prefill_coefficients_ = fit_nonnegative_quadratic(matrix, target);
+  }
+  if (valid_profile && !ttft_profiling_data.empty()) {
     // construct Vandermonde matrix
     int32_t m = ttft_profiling_data.size();
     int32_t n = kDegree + 1;
@@ -90,6 +151,26 @@ double TimePredictor::predict_tpot(int32_t total_length, int32_t batch_size) {
   result = tpot_coefficients_(0) + tpot_coefficients_(1) * batch_size +
            tpot_coefficients_(2) * total_length;
   return result;
+}
+
+std::optional<double> TimePredictor::predict_prefill_time(
+    int32_t length,
+    int32_t cached_tokens) {
+  if (!has_prefill_profile_ || length <= 0 || cached_tokens < 0 ||
+      cached_tokens >= length) {
+    return std::nullopt;
+  }
+  const double uncached = (length - cached_tokens) / prefill_length_scale_;
+  const double cached = cached_tokens / prefill_length_scale_;
+  // Evaluate F(N)-F(H)+F(0) directly, avoiding subtraction of two close
+  // predictions for long contexts with an almost complete prefix hit.
+  const double remaining_time =
+      prefill_coefficients_(0) + prefill_coefficients_(1) * uncached +
+      prefill_coefficients_(2) * uncached * (uncached + 2 * cached);
+  if (!std::isfinite(remaining_time) || remaining_time <= 0) {
+    return std::nullopt;
+  }
+  return remaining_time;
 }
 
 }  // namespace xllm_service

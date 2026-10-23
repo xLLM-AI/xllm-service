@@ -94,10 +94,16 @@ class InstanceMgr final {
 
   // update request metrics under different actions
   void update_request_metrics(const std::shared_ptr<Request>& request,
-                              RequestAction action);
+                              RequestAction action,
+                              int64_t generated_tokens = 0);
 
   // select instances based on the SLO
   bool select_instance_pair_on_slo(std::shared_ptr<Request> request);
+
+  // Selection, incarnation binding and reservation share one topology lock.
+  bool select_instance_pair_on_ds_load_balance(
+      const std::shared_ptr<Request>& request,
+      const std::unordered_map<std::string, PrefillCacheHint>& cache_hints);
 
   void set_as_master();
 
@@ -213,6 +219,8 @@ class InstanceMgr final {
   std::unordered_map<std::string, LoadMetrics> updated_metrics_;
   std::unordered_set<std::string> removed_instance_;
   std::unordered_map<std::string, TimePredictor> time_predictors_;
+  std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>
+      prefill_time_profiles_;
   std::unordered_map<std::string, LatencyMetrics> latency_metrics_;
   std::unordered_map<std::string, RequestMetrics> request_metrics_;
 
