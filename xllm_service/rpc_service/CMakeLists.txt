@@ -23,7 +23,8 @@ cc_library(
   DEPS
     :common
     :disagg_generation_adapter
-    :scheduler
+    :request_manager
+    :instance_controller
     absl::random_random
     absl::strings
     glog::glog

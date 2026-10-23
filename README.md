@@ -50,15 +50,20 @@ With management of computing resource pools, intelligent scheduling and preempti
 ## 3. Core Architecture
 
 ```
-├── xllm-service/
-|   : main source folder
-│   ├── chat_template/               # 
-│   ├── common/                      # 
-│   ├── examples/                    # 
-│   ├── http_service/                # 
-│   ├── rpc_service/                 # 
-|   ├── tokenizers/                  #
-|   └── master.cpp                   # 
+xllm_service/
+├── config/                # Startup configuration
+├── router/                # Routing and request lifecycle
+├── cluster/               # Instance state, health and engine clients
+├── coordinator/           # etcd discovery and service membership
+├── request/               # Request data, preprocessing and ordered output
+├── kv_conductor/          # Asynchronous KV events and prefix index
+├── http_service/          # HTTP API and response encoding
+├── rpc_service/           # RPC API and structured output adaptation
+├── chat_template/         # Chat templates
+├── tokenizer/             # Tokenizer pool
+├── common/                # Shared types and utilities
+├── service_app.cpp        # Composition and lifecycle
+└── main.cpp               # Entry point and signal handling
 ```
 
 ---

@@ -42,8 +42,9 @@ int main(int argc, char* argv[]) {
   }
 
   // create xllm service
-  xllm_service::Options service_options;
-  xllm_service::XllmRpcService service(service_options, nullptr);
+  xllm_service::ServiceConfig service_options;
+  xllm_service::XllmRpcService service(
+      service_options, nullptr, nullptr, nullptr);
 
   // Initialize brpc server
   std::string server_address = "0.0.0.0:" + std::to_string(FLAGS_port);

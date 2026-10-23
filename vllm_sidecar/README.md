@@ -41,11 +41,11 @@ long-running process that keeps registration in lockstep with vLLM's health.
 
 | step | code |
 |---|---|
-| watch `XLLM:DEFAULT:` etc. | `instance_mgr.cpp:133` `add_watch(prefix, ...)` |
-| `PUT` → register | `instance_mgr.cpp:568` `update_instance_metainfo` → `register_instance` |
-| lease expiry → `DELETE` → probe → suspect/remove | `instance_mgr.cpp:615+` |
+| watch `XLLM:DEFAULT:` etc. | `coordinator/instance_discovery.cpp` `add_watch(prefix, ...)` |
+| `PUT` → register | `cluster/instance_controller.cpp` `on_instance_event` → `register_instance` |
+| lease expiry → `DELETE` → probe → suspect/remove | `cluster/instance_controller.cpp` |
 | JSON schema | `common/types.h:248` `parse_from_json` (needs `name`,`rpc_address`,`type`) |
-| key prefix / namespace | `instance_mgr.cpp:45` map, `utils.cpp:105` namespace |
+| key prefix / namespace | `coordinator/instance_discovery.cpp` prefixes, `common/utils.cpp` namespace |
 
 > **Constraint:** a single vLLM instance with no decode peer is routable only as
 > `type=DEFAULT (0)` — keep `--instance-type=DEFAULT`. This mirrors the M2 finding.
@@ -107,7 +107,7 @@ POSTs a heartbeat to the master every `--heartbeat-interval` seconds:
     {"name","incarnation_id","load_metrics":{...},"latency_metrics":{...}}
 
 The master reuses the same `handle_instance_heartbeat` path as the brpc backends:
-the JSON is parsed into a `proto::HeartbeatRequest` and feeds the scheduler's
+the JSON is parsed into a `proto::HeartbeatRequest` and feeds the instance controller's
 in-memory load metrics (which the master then publishes to `XLLM:LOADMETRICS:`
 for non-master nodes). Mapping (pinned to vLLM 0.21):
 

@@ -39,3 +39,5 @@ cc_test(
     :anthropic_stream_encoder
     GTest::gtest_main
 )
+
+cc_test(NAME response_handler_test SRCS response_handler_test.cpp DEPS :response_handler GTest::gtest_main)

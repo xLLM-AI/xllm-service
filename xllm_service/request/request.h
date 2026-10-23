@@ -17,10 +17,9 @@ limitations under the License.
 
 #include <absl/time/time.h>
 
-#include "chat_template/jinja_chat_template.h"
-#include "common/call_data.h"
 #include "common/types.h"
 #include "common/xllm/output.h"
+#include "request/chat_message.h"
 
 namespace xllm_service {
 
@@ -44,7 +43,7 @@ struct Request {
   std::string prompt;
 
   // input messages
-  ChatMessages messages;
+  std::vector<Message> messages;
 
   // tool definitions for function/tool calling
   std::vector<JsonTool> tools;
@@ -78,7 +77,7 @@ struct Request {
   // Accessed only by this request's output thread.
   bool output_finished = false;
 
-  std::shared_ptr<CallData> call_data;
+  std::function<bool()> is_disconnected;
 
   // trace callback
   std::function<void(const std::string&)> trace_callback = nullptr;

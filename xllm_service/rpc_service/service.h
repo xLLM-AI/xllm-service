@@ -19,21 +19,25 @@ limitations under the License.
 #include <unordered_map>
 
 #include "chat.pb.h"
-#include "common/options.h"
 #include "common/types.h"
 #include "common/xllm/output.h"
 #include "common/xllm/status.h"
 #include "completion.pb.h"
+#include "config/service_config.h"
 #include "xllm_rpc_service.pb.h"
 
 namespace xllm_service {
 
-class Scheduler;
-class InstanceMgr;
+class RequestManager;
+class InstanceController;
+class InstanceState;
 
 class XllmRpcServiceImpl final {
  public:
-  XllmRpcServiceImpl(const Options& options, Scheduler* scheduler);
+  XllmRpcServiceImpl(const ServiceConfig& options,
+                     RequestManager* requests,
+                     InstanceState* instances,
+                     InstanceController* controller);
   ~XllmRpcServiceImpl();
 
   bool heartbeat(const proto::HeartbeatRequest* req);
@@ -51,30 +55,21 @@ class XllmRpcServiceImpl final {
   bool handle_generation(llm::RequestOutput request_output);
 
  private:
-  Options options_;
+  ServiceConfig options_;
 
   // not own
-  Scheduler* scheduler_;
-
-  // In disagg pd mode, we support receive generated token from
-  // prefill or from decode directly.
-  // 1.
-  // [service] ---req---> [prefill] ---req---> [decode]
-  // [service] <---first resp--- [prefill] ---first resp---> [decode]
-  // [service] <---resp--- [prefill] <---resp--- [decode]
-  //
-  // 2.
-  // [service] ---req---> [prefill] ---req---> [decode]
-  // [service] <---first resp-- [prefill] --first resp---> [decode]
-  // [service] <---resp-- [decode]
-  //
-  bool enable_decode_response_to_service_ = false;
+  RequestManager* requests_;
+  InstanceState* instances_;
+  InstanceController* controller_;
 };
 
 // parse proto data and call XllmRpcService
 class XllmRpcService : public proto::XllmRpcService {
  public:
-  explicit XllmRpcService(const Options& options, Scheduler* scheduler);
+  explicit XllmRpcService(const ServiceConfig& options,
+                          RequestManager* requests,
+                          InstanceState* instances,
+                          InstanceController* controller);
   virtual ~XllmRpcService();
 
   virtual void Hello(google::protobuf::RpcController* cntl_base,

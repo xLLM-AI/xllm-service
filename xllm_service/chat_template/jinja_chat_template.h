@@ -24,63 +24,10 @@ limitations under the License.
 
 #include "chat_template/chat_template.h"
 #include "common/types.h"
+#include "request/chat_message.h"
 #include "tokenizer/tokenizer_args.h"
 
 namespace xllm_service {
-
-struct Message {
-  struct FunctionCall {
-    std::string name;
-    std::string arguments;
-  };
-
-  struct ToolCall {
-    std::string id;
-    std::string type;
-    FunctionCall function;
-  };
-
-  struct MMUrl {
-    std::string url;
-  };
-
-  struct MMContent {
-    MMContent(const std::string& type) : type(type) {}
-    MMContent(const std::string& type, const std::string& text)
-        : type(type), text(text) {}
-
-    std::string type;
-
-    std::string text;
-    std::string thinking;
-    std::string signature;
-    std::string data;
-    std::string id;
-    std::string name;
-    nlohmann::ordered_json input = nlohmann::ordered_json::object();
-    MMUrl image_url;  // image place holder
-
-    MMUrl video_url;  // video place holder
-    MMUrl audio_url;  // audio place holder
-  };
-
-  using MMContentVec = std::vector<MMContent>;
-  using ToolCallVec = std::vector<ToolCall>;
-  using Content = std::variant<std::string, MMContentVec>;
-
-  Message() = default;
-  Message(const std::string& role, const std::string& content)
-      : role(role), content(content) {}
-
-  Message(const std::string& role, const MMContentVec& content)
-      : role(role), content(content) {}
-
-  std::string role;
-  Content content;
-  std::optional<std::string> reasoning_content;
-  std::optional<ToolCallVec> tool_calls;
-  std::string tool_call_id;
-};
 
 // A chat template implementation that uses jinja2 as the template engine.
 class JinjaChatTemplate : public ChatTemplate {

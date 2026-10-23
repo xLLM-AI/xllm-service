@@ -21,24 +21,35 @@ limitations under the License.
 #include <mutex>
 
 #include "chat.pb.h"
+#include "cluster/instance_client.h"
 #include "common/call_data.h"
-#include "common/options.h"
 #include "common/threadpool.h"
 #include "common/types.h"
 #include "completion.pb.h"
+#include "config/service_config.h"
+#include "http_service/response_handler.h"
 #include "request/request.h"
 #include "request_tracer.h"
 #include "xllm_http_service.pb.h"
 
 namespace xllm_service {
 
-class Scheduler;
-class InstanceMgr;
+class Router;
+class InstanceState;
+class InstanceController;
+class RequestManager;
+class KVDirectory;
 class ClosureGuard;
 
 class XllmHttpServiceImpl : public proto::XllmHttpService {
  public:
-  XllmHttpServiceImpl(const Options& options, Scheduler* scheduler);
+  XllmHttpServiceImpl(const ServiceConfig& options,
+                      Router* router,
+                      RequestManager* requests,
+                      InstanceState* instances,
+                      InstanceController* controller,
+                      const KVDirectory* directory,
+                      InstanceClient* client);
   ~XllmHttpServiceImpl();
 
   void Hello(::google::protobuf::RpcController* controller,
@@ -108,10 +119,16 @@ class XllmHttpServiceImpl : public proto::XllmHttpService {
                           ::google::protobuf::Closure* done);
 
  private:
-  Options options_;
+  ServiceConfig options_;
 
   // not own
-  Scheduler* scheduler_;
+  Router* router_;
+  RequestManager* requests_;
+  InstanceState* instances_;
+  InstanceController* controller_;
+  const KVDirectory* directory_;
+  ResponseHandler response_handler_;
+  InstanceClient* instance_client_;
 
   bool initialized_ = false;
 

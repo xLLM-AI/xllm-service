@@ -1,20 +1,19 @@
 # xLLM KV events 自动订阅、分层索引与 CAR 路由
 
-本功能在 xllm-service 进程内后台订阅 xLLM 的 ZMQ KV events，维护按实例、DP、
-Device/Host 区分的前缀目录。目录只保存元数据，不存储或搬运 KV tensor。
-实现位于 `xllm_service/kv_indexer/`，对应回归位于
-`tests/xllm_service/kv_indexer/`。
-其中 `kv_directory` 管理订阅与发现，`kv_index` 维护分层前缀索引，
-`kv_event_decoder` 解析事件；回归入口为 `kv_directory_test`。
+## 目录维护的内容
 
-CAR 直接使用新索引中的 Device/Host 连续前缀命中，并结合负载选实例；
-内部只读查询与 CAR 共用目录。旧 GlobalKVCacheMgr、KV 心跳消费、KV etcd
-读写及 watch 已删除。实例发现、健康检测、负载心跳和负载的 etcd 同步继续保留。
-订阅复用现有实例注册信息，不需要修改 xLLM。RR/SLO_AWARE 的选点逻辑保持原有实现。
+service 在后台订阅 xLLM 的 ZMQ KV events，维护按实例、DP、Device/Host
+区分的前缀目录。目录只保存元数据，不存储或搬运 KV tensor。
+`kv_directory` 管理订阅与发现，`kv_index` 维护分层前缀索引，
+`kv_event_decoder` 解析事件。
+
+CAR 结合目录中的 Device/Host 连续前缀命中和实例负载选点，内部查询接口与 CAR
+共用该目录。KV 元数据来自引擎事件；etcd 负责实例发现、健康状态和负载同步，
+不存储 KV 元数据。RR/SLO_AWARE 保持各自的选点逻辑。
 
 ## 构建和回归
 
-ZeroMQ 由 service 自身的 vcpkg manifest 管理，不依赖 Motor 的编译产物。
+ZeroMQ 由 service 自身的 vcpkg manifest 管理。
 在已准备好项目依赖的开发环境执行：
 
 ```bash
@@ -57,13 +56,9 @@ Docker 或 K8s 启动。自动订阅与 service 是否负责拉起引擎相互�
 
 service 的 `kv_events_config_file` 是 JSON **文件路径**；引擎的 `kv_events_config`
 是 JSON **字符串**。空文件路径关闭索引；此时 CAR 在启动日志中提示，并将 P 的命中比置零。
-该参数在 `xllm_master_serving` 入口接入；独立的示例 HTTP/RPC serving 程序不在本版范围。
+该参数用于 `xllm_master_serving` 入口，独立的示例 HTTP/RPC serving 程序不读取此配置。
 
-`kv_events_config_file` 是这版 service 新增的配置入口，Motor 不使用这个同名参数。
-Motor 从 `scheduler_config.kv_conductor_config` 读取端点规则，再结合实例信息注册订阅；
-llm-d 在 EPP 插件参数中配置 `kvEventsConfig`，支持全局端点和按实例发现。
-其全局模式由订阅方绑定一个地址；按实例发现模式连接各引擎 PUB 地址。
-本版采用连接各引擎 PUB 的方向，不等同于 llm-d 全局模式。
+service 的 SUB 连接引擎的 PUB 地址，replay 客户端连接引擎的恢复地址。
 
 ## 自动发现配置
 
@@ -82,7 +77,7 @@ llm-d 在 EPP 插件参数中配置 `kvEventsConfig`，支持全局端点和按�
 }
 ```
 
-后台读取 `InstanceMgr` 已由 etcd watch 维护的本地快照，不额外扫描 etcd，
+后台读取 `InstanceState` 已由 etcd watch 维护的本地快照，不额外扫描 etcd，
 也不在请求线程里执行发现或连接。使用注册的 HTTP 地址 `host:port` 推导：
 
 ```text
@@ -97,7 +92,7 @@ llm-d 在 EPP 插件参数中配置 `kvEventsConfig`，支持全局端点和按�
 无需额外配置模型分组。`block_size` 须与引擎实际发布的事件一致。
 
 订阅符合条件的 xLLM DEFAULT/PREFILL 实例，以及当前承担 PREFILL 的 MIX 实例。
-DECODE 实例和其他后端不纳入本版目录。沿用现有实例状态机：租约丢失的宽限期
+DECODE 实例和其他后端不纳入目录。沿用现有实例状态机：租约丢失的宽限期
 保留订阅，进入 SUSPECT 或移出实例目录后删除订阅及查询项。
 发现间隔默认 1000 ms，可设 50–60000 ms；实例状态通常在下一个发现周期更新，
 下线判定所需的探测和宽限时间沿用现有实例状态机。
@@ -232,7 +227,7 @@ CAR 同时比对实例 incarnation，旧版无 incarnation 时比较注册时间
 
 旧心跳 protobuf 的 `cache_event` 字段仅为兼容已有引擎保留并标记 deprecated，
 service 不读取它，也不再读写 `XLLM:CACHE:`。引擎尚未关闭旧心跳上报时，
-该字段会被忽略；本次不改引擎。各 service 副本各自订阅和恢复目录，
+该字段会被忽略。各 service 副本各自订阅和恢复目录，
 主从切换无需迁移旧 KV etcd 数据。原有 `--block_size` 不用于新索引，
 实际事件块大小以发现配置中的 `block_size` 为准。
 
@@ -241,8 +236,7 @@ service 不读取它，也不再读写 `XLLM:CACHE:`。引擎尚未关闭旧心�
 消费当前 xLLM 的三帧协议：`topic | uint64 大端序号 | MessagePack`。
 batch 为 `[timestamp, events, dp_rank]`，事件为带 `type` 的 map，支持
 `BlockStored`、`BlockRemoved`、`AllBlocksCleared` 及 `gpu`/`cpu` 介质。
-主事件通道已经提供 Device/Host 信息，不需要 `motor_pool_endpoint`。
-本版适配 xLLM flat text 的事件，不声明支持任意 vLLM 版本或 LoRA/多模态上下文。
+同一事件通道承载 Device/Host 元数据，索引支持纯文本前缀，不包含 LoRA 或多模态上下文。
 
 目录用完整前缀上下文和 tokens 生成内部 XXH3-128 内容键，并保留
 `engine_hash → 内容键` 映射供删除和 tokenless 副本事件使用。不能把线上折叠的
@@ -283,34 +277,3 @@ PUB 通道自身发送的 `AllBlocksCleared + Stored` 全量 batch 也能恢复�
 包含原有约 3 GiB 基线占用；该数字为就绪快照，不是显存峰值。
 本轮验证六层模型的事件、分层复用和路由正确性，不评价减层模型的生成质量。
 引擎退出仍需超时强制清理，本轮未改动该行为。
-
-## 与 Motor / llm-d 的源码对照
-
-核对版本：Motor 上游 master `8de05c7`，llm-d-router main `ee50ad2`。
-以下比较针对事件消费与索引，不表示本版已经具有两者的完整调度、发现和运维能力。
-
-| 方面 | Motor KVConductor | llm-d | 本版 xllm-service |
-| --- | --- | --- | --- |
-| 配置入口 | Coordinator 的 `scheduler_config.kv_conductor_config` | EPP 插件的 `kvEventsConfig` | `kv_events_config_file` 指向发现规则或静态流清单 |
-| 端点管理 | 实例加入/退出时，由 Coordinator 注册/注销 Conductor 订阅 | 根据端点生命周期增删订阅，事件端口按基础端口加 DP rank 推导 | 后台对照已有实例快照增删订阅；端口按业务端口、offset 和 DP rank 推导 |
-| 进程组织 | Python Coordinator 调用 Rust KVConductor 的 HTTP 接口 | Go 事件池和索引可嵌入 EPP 插件 | C++ 模块嵌入 service，独立后台接收线程 |
-| 分层索引 | HBM 前缀树和 CPU/Disk 连续后缀索引 | 引擎键到请求键映射，维护持有端点及 DeviceTier | 引擎键到内部内容键映射，Device/Host 独立驻留，按实例/DP 查询连续前缀 |
-| 路由接入 | Coordinator 查询目录后结合负载和各介质代价选点 | prefix cache producer/scorer 接入 EPP 调度 | CAR 直接查询进程内目录，结合分层命中与负载选实例 |
-
-两者都将“事件传输/解码”“缓存元数据索引”“路由评分”分开。当前保留
-`kv_event_decoder`、`KVIndex`、`KVDirectory` 的职责边界；
-实例发现复用现有 service 实例目录，CAR 在调度策略层消费命中结果。
-端点自动推导仍需要统一端口规则；若部署允许任意端口，可再增加显式端点元数据。
-
-恢复协议需要单独适配：Motor 当前 replay 客户端读取
-`[空分隔帧, seq, payload]` 并以 UINT64_MAX 结束，与当前 xLLM 的封装可对接；
-但该版本实时接收循环直接消费 payload，并没有与本版相同的持续序号断档检查。
-llm-d 当前区分历史 replay 与独立 snapshot 端点：snapshot 使用 REQ 发送
-`snapshot`，接收水位、publisher identity 和事件批次；历史 replay 解析带 topic 的事件帧。
-因此不能仅凭实时事件采用 vLLM 风格，就认为当前 xLLM 的恢复端点也能直接接入
-任意版本 llm-d。本版明确消费当前 xLLM 的全量快照恢复协议。
-
-参考源码：
-
-- [Motor 配置](https://github.com/Ascend/MindIE-Motor/blob/8de05c73b983e2fb0e4c191324fc0c6ced65cc7e/motor/config/coordinator.py)、[实例注册](https://github.com/Ascend/MindIE-Motor/blob/8de05c73b983e2fb0e4c191324fc0c6ced65cc7e/motor/coordinator/api_client/conductor_api_client.py)、[订阅与 replay](https://github.com/Ascend/MindIE-Motor/blob/8de05c73b983e2fb0e4c191324fc0c6ced65cc7e/motor/kv_conductor/src/zmq_subscriber.rs)、[分层索引](https://github.com/Ascend/MindIE-Motor/blob/8de05c73b983e2fb0e4c191324fc0c6ced65cc7e/motor/kv_conductor/src/indexer/mod.rs)。
-- [llm-d 配置](https://github.com/llm-d/llm-d-router/blob/ee50ad27dab73be9d66029e920dd1578437fe388/pkg/kvevents/pool.go)、[端点订阅管理](https://github.com/llm-d/llm-d-router/blob/ee50ad27dab73be9d66029e920dd1578437fe388/pkg/epp/framework/plugins/requestcontrol/dataproducer/preciseprefixcache/extractor.go)、[恢复协议](https://github.com/llm-d/llm-d-router/blob/ee50ad27dab73be9d66029e920dd1578437fe388/pkg/kvevents/zmq_subscriber.go)、[索引接口](https://github.com/llm-d/llm-d-router/blob/ee50ad27dab73be9d66029e920dd1578437fe388/pkg/kvcache/kvblock/index.go)。

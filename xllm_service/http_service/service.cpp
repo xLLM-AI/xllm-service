@@ -29,6 +29,7 @@ limitations under the License.
 #include <nlohmann/json.hpp>
 
 #include "chat.pb.h"
+#include "cluster/instance_controller.h"
 #include "common/anthropic_tracer.h"
 #include "common/call_data.h"
 #include "common/closure_guard.h"
@@ -38,7 +39,8 @@ limitations under the License.
 #include "completion.pb.h"
 #include "http_service/anthropic_adapter.h"
 #include "http_service/chat_json_parser.h"
-#include "scheduler/scheduler.h"
+#include "router/request_manager.h"
+#include "router/router.h"
 #include "xllm_rpc_service.pb.h"
 #include "xllm_service.pb.h"
 
@@ -136,9 +138,20 @@ std::vector<JsonTool> parse_tools_from_proto(
 }
 }  // namespace
 
-XllmHttpServiceImpl::XllmHttpServiceImpl(const Options& options,
-                                         Scheduler* scheduler)
-    : options_(options), scheduler_(scheduler) {
+XllmHttpServiceImpl::XllmHttpServiceImpl(const ServiceConfig& options,
+                                         Router* router,
+                                         RequestManager* requests,
+                                         InstanceState* instances,
+                                         InstanceController* controller,
+                                         const KVDirectory* directory,
+                                         InstanceClient* client)
+    : options_(options),
+      router_(router),
+      requests_(requests),
+      instances_(instances),
+      controller_(controller),
+      directory_(directory),
+      instance_client_(client) {
   initialized_ = true;
   thread_pool_ = std::make_unique<ThreadPool>(options_.num_threads());
   request_tracer_ =
@@ -176,20 +189,20 @@ void handle_non_stream_response(brpc::Controller* cntl,
   call_data->write_and_finish(cntl->response_attachment().to_string());
 }
 
-// fire and forget
-template <typename T>
+// Submission failures enter the same ordered output path as engine results.
 void handle_first_send_request(brpc::Controller* cntl,
-                               std::shared_ptr<T> call_data,
-                               Scheduler* scheduler,
+                               RequestManager* requests,
                                std::string service_request_id,
-                               bool stream) {
+                               std::shared_ptr<brpc::Channel> /*channel*/) {
   std::unique_ptr<brpc::Controller> cntl_guard(cntl);
-  if (cntl->Failed()) {
-    LOG(ERROR) << "Fail to send stream generation, " << cntl->ErrorText();
-    call_data->finish_with_error(cntl->ErrorText());
-    scheduler->finish_request(service_request_id, /*error*/ true);
+  if (!cntl->Failed()) {
     return;
   }
+  LOG(ERROR) << "Request submission failed: " << cntl->ErrorText();
+  llm::RequestOutput output;
+  output.service_request_id = std::move(service_request_id);
+  output.status = llm::Status(llm::StatusCode::UNAVAILABLE, cntl->ErrorText());
+  requests->handle_generation(std::move(output));
 }
 
 template <typename T>
@@ -259,13 +272,15 @@ void handle_vllm_non_stream_done(brpc::Controller* redirect_cntl,
 // the vLLM SSE format passes through unchanged.
 template <typename T>
 void handle_vllm(std::shared_ptr<T> call_data,
-                 Scheduler* scheduler,
-                 const std::string& target_name,
+                 InstanceClient* client,
+                 const Request& request,
                  const std::string& path,
                  bool is_post,
                  const std::string& body,
                  bool stream) {
-  auto channel = scheduler->get_channel(target_name);
+  const std::string& target_name = request.routing.prefill_name;
+  auto channel =
+      client->get_channel(target_name, request.prefill_incarnation_id);
   if (channel == nullptr) {
     LOG(ERROR) << "No channel for vLLM instance: " << target_name;
     call_data->finish_with_error("vLLM backend instance is not available.");
@@ -332,7 +347,8 @@ void XllmHttpServiceImpl::handle(std::shared_ptr<T> call_data,
                                  std::shared_ptr<Request> request) {
   // record request
   auto& req_pb = call_data->request();
-  bool success = scheduler_->record_new_request(call_data, request);
+  response_handler_.bind(call_data, request);
+  bool success = requests_->publish_request(request);
   if (!success) {
     LOG(ERROR) << "rpc service add new request error: "
                << request->service_request_id;
@@ -340,33 +356,23 @@ void XllmHttpServiceImpl::handle(std::shared_ptr<T> call_data,
     return;
   }
 
-  // async redistribute the request and wait the response
-  // TODO: optimize the thread pool to async mode.
-  auto& target_uri = request->routing.prefill_name;
-  brpc::Channel* channel_ptr = scheduler_->get_channel(target_uri).get();
-  // use stub
-  xllm::proto::XllmAPIService_Stub stub(channel_ptr);
-  // xllm::proto::Status* resp_pb = new xllm::proto::Status();
-  brpc::Controller* redirect_cntl = new brpc::Controller();
-  google::protobuf::Closure* done =
-      brpc::NewCallback(&handle_first_send_request<T>,
-                        redirect_cntl,
-                        call_data,
-                        scheduler_,
-                        request->service_request_id,
-                        request->stream);
-
-  if constexpr (std::is_same_v<T, CompletionCallData>) {
-    stub.Completions(redirect_cntl, &req_pb, nullptr, done);
-  } else if constexpr (std::is_same_v<T, ChatCallData>) {
-    stub.ChatCompletions(redirect_cntl, &req_pb, nullptr, done);
-  } else if constexpr (std::is_same_v<T, AnthropicCallData>) {
-    stub.ChatCompletions(redirect_cntl, &req_pb, nullptr, done);
-  } else {
-    delete redirect_cntl;
-    delete done;
-    LOG(ERROR) << "Unknown call_data type";
+  auto channel = instance_client_->get_channel(request->routing.prefill_name,
+                                               request->prefill_incarnation_id);
+  if (channel == nullptr) {
+    llm::RequestOutput output;
+    output.service_request_id = request->service_request_id;
+    output.status = llm::Status(llm::StatusCode::UNAVAILABLE,
+                                "Selected instance is unavailable");
+    requests_->handle_generation(std::move(output));
+    return;
   }
+  auto* redirect_cntl = new brpc::Controller();
+  auto* done = brpc::NewCallback(&handle_first_send_request,
+                                 redirect_cntl,
+                                 requests_,
+                                 request->service_request_id,
+                                 channel);
+  instance_client_->generate(channel, redirect_cntl, req_pb, done);
 }
 
 template <typename T>
@@ -402,7 +408,7 @@ std::shared_ptr<Request> XllmHttpServiceImpl::generate_request(
 namespace {
 void handle_get_model_response(brpc::Controller* cntl,
                                std::shared_ptr<CompletionCallData> call_data,
-                               google::protobuf::Closure* done,
+                               std::shared_ptr<brpc::Channel> /*channel*/,
                                xllm::proto::ModelListResponse* resp_pb) {
   std::unique_ptr<brpc::Controller> cntl_guard(cntl);
   std::unique_ptr<xllm::proto::ModelListResponse> resp_pb_guard(resp_pb);
@@ -449,18 +455,18 @@ void XllmHttpServiceImpl::get_serving_models(
       cntl, false, done_guard.release(), nullptr, nullptr);
 
   auto service_request = std::make_shared<Request>();
-  if (!scheduler_->schedule(service_request)) {
+  if (!router_->schedule(service_request)) {
     cntl->SetFailed("Schedule request failed!");
     LOG(ERROR) << "Schedule request failed!";
     return;
   }
 
   // vLLM backend: relay GET /v1/models straight through.
-  if (scheduler_->get_instance_info(service_request->routing.prefill_name)
+  if (instances_->get_instance_info(service_request->routing.prefill_name)
           .backend_type == "vllm") {
     handle_vllm(call_data,
-                scheduler_,
-                service_request->routing.prefill_name,
+                instance_client_,
+                *service_request,
                 "/v1/models",
                 /*is_post=*/false,
                 /*body=*/"",
@@ -468,14 +474,18 @@ void XllmHttpServiceImpl::get_serving_models(
     return;
   }
 
-  brpc::Channel* channel_ptr =
-      scheduler_->get_channel(service_request->routing.prefill_name).get();
-
-  xllm::proto::XllmAPIService_Stub stub(channel_ptr);
+  auto channel =
+      instance_client_->get_channel(service_request->routing.prefill_name,
+                                    service_request->prefill_incarnation_id);
+  if (channel == nullptr) {
+    call_data->finish_with_error("Selected instance is unavailable");
+    return;
+  }
+  xllm::proto::XllmAPIService_Stub stub(channel.get());
   brpc::Controller* redirect_cntl = new brpc::Controller();
   auto* resp_pb = new xllm::proto::ModelListResponse();
   google::protobuf::Closure* done_callback = brpc::NewCallback(
-      &handle_get_model_response, redirect_cntl, call_data, done, resp_pb);
+      &handle_get_model_response, redirect_cntl, call_data, channel, resp_pb);
   stub.Models(redirect_cntl, req_pb, resp_pb, done_callback);
 }
 
@@ -516,7 +526,7 @@ void XllmHttpServiceImpl::Completions(
   if (!req_pb->prompt().empty()) {
     service_request->prompt = req_pb->prompt();
     // select instance for request
-    if (!scheduler_->schedule(service_request)) {
+    if (!router_->schedule(service_request)) {
       cntl->SetFailed("Schedule request failed!");
       LOG(ERROR) << "Schedule request failed!";
       return;
@@ -528,13 +538,13 @@ void XllmHttpServiceImpl::Completions(
   }
 
   // vLLM backend: relay the raw client JSON over HTTP, skip xllm-only fields.
-  if (scheduler_->get_instance_info(service_request->routing.prefill_name)
+  if (instances_->get_instance_info(service_request->routing.prefill_name)
           .backend_type == "vllm") {
     auto call_data = std::make_shared<CompletionCallData>(
         cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
     handle_vllm(call_data,
-                scheduler_,
-                service_request->routing.prefill_name,
+                instance_client_,
+                *service_request,
                 "/v1/completions",
                 /*is_post=*/true,
                 attachment,
@@ -641,7 +651,7 @@ void XllmHttpServiceImpl::ChatCompletions(
       service_request->tool_choice = req_pb->tool_choice();
     }
 
-    if (!scheduler_->schedule(service_request)) {
+    if (!router_->schedule(service_request)) {
       cntl->SetFailed("Schedule request failed!");
       LOG(ERROR) << "Schedule request failed!";
       return;
@@ -653,13 +663,13 @@ void XllmHttpServiceImpl::ChatCompletions(
   }
 
   // vLLM backend: relay the raw client JSON over HTTP, skip xllm-only fields.
-  if (scheduler_->get_instance_info(service_request->routing.prefill_name)
+  if (instances_->get_instance_info(service_request->routing.prefill_name)
           .backend_type == "vllm") {
     auto call_data = std::make_shared<ChatCallData>(
         cntl, service_request->stream, done_guard.release(), req_pb, resp_pb);
     handle_vllm(call_data,
-                scheduler_,
-                service_request->routing.prefill_name,
+                instance_client_,
+                *service_request,
                 "/v1/chat/completions",
                 /*is_post=*/true,
                 attachment,
@@ -744,7 +754,7 @@ void XllmHttpServiceImpl::AnthropicMessages(
     service_request->tool_choice = req_pb->tool_choice();
   }
 
-  if (!scheduler_->schedule(service_request)) {
+  if (!router_->schedule(service_request)) {
     cntl->SetFailed("Schedule request failed!");
     LOG(ERROR) << "Schedule request failed!";
     return;
@@ -858,7 +868,7 @@ void XllmHttpServiceImpl::Heartbeat(
   // Reuse the RPC heartbeat schema/path so HTTP sidecars and brpc
   // backends update scheduler state consistently: liveness/incarnation,
   // LoadMetrics, and LatencyMetrics. Legacy cache_event is ignored.
-  if (!scheduler_ || !scheduler_->handle_instance_heartbeat(&req)) {
+  if (!controller_ || !controller_->handle_instance_heartbeat(&req)) {
     // Unknown instance or stale incarnation -> ask the sidecar to re-register.
     reply(409, "{\"error\":\"instance not registered or stale incarnation\"}");
     return;
@@ -887,8 +897,7 @@ void XllmHttpServiceImpl::KVCacheQuery(
       return;
     }
   }
-  const KVDirectory* directory =
-      scheduler_ == nullptr ? nullptr : scheduler_->kv_directory();
+  const KVDirectory* directory = directory_;
   if (directory == nullptr) {
     reply(404, {{"error", "KV events observation index is disabled"}});
     return;

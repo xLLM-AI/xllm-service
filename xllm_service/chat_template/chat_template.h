@@ -24,7 +24,7 @@ limitations under the License.
 
 namespace xllm_service {
 
-struct Message;
+class Message;
 using ChatMessages = std::vector<Message>;
 
 // Renders messages/tools into a prompt.

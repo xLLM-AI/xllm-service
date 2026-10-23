@@ -21,46 +21,55 @@ limitations under the License.
 
 #include <utility>
 
+#include "cluster/instance_controller.h"
 #include "common/types.h"
 #include "common/utils.h"
 #include "common/xllm/status.h"
+#include "router/request_manager.h"
 #include "rpc_service/disagg_generation_adapter.h"
-#include "scheduler/scheduler.h"
 
 namespace xllm_service {
 
-XllmRpcServiceImpl::XllmRpcServiceImpl(const Options& options,
-                                       Scheduler* scheduler)
-    : options_(options), scheduler_(scheduler) {}
+XllmRpcServiceImpl::XllmRpcServiceImpl(const ServiceConfig& options,
+                                       RequestManager* requests,
+                                       InstanceState* instances,
+                                       InstanceController* controller)
+    : options_(options),
+      requests_(requests),
+      instances_(instances),
+      controller_(controller) {}
 
-XllmRpcServiceImpl::~XllmRpcServiceImpl() { scheduler_->exited(); }
+XllmRpcServiceImpl::~XllmRpcServiceImpl() = default;
 
 bool XllmRpcServiceImpl::heartbeat(const proto::HeartbeatRequest* req) {
-  return scheduler_->handle_instance_heartbeat(req);
+  return controller_->handle_instance_heartbeat(req);
 }
 
 InstanceMetaInfo XllmRpcServiceImpl::get_instance_info(
     const std::string& instance_name) {
-  return scheduler_->get_instance_info(instance_name);
+  return instances_->get_instance_info(instance_name);
 }
 
 std::vector<std::string> XllmRpcServiceImpl::get_static_decode_list(
     const std::string& instance_name) {
-  return scheduler_->get_static_decode_list(instance_name);
+  return instances_->get_static_decode_list(instance_name);
 }
 
 std::vector<std::string> XllmRpcServiceImpl::get_static_prefill_list(
     const std::string& instance_name) {
-  return scheduler_->get_static_prefill_list(instance_name);
+  return instances_->get_static_prefill_list(instance_name);
 }
 
 bool XllmRpcServiceImpl::handle_generation(llm::RequestOutput request_output) {
-  return scheduler_->handle_generation(std::move(request_output));
+  return requests_->handle_generation(std::move(request_output));
 }
 
-XllmRpcService::XllmRpcService(const Options& options, Scheduler* scheduler) {
-  xllm_rpc_service_impl_ =
-      std::make_unique<XllmRpcServiceImpl>(options, scheduler);
+XllmRpcService::XllmRpcService(const ServiceConfig& options,
+                               RequestManager* requests,
+                               InstanceState* instances,
+                               InstanceController* controller) {
+  xllm_rpc_service_impl_ = std::make_unique<XllmRpcServiceImpl>(
+      options, requests, instances, controller);
 }
 
 XllmRpcService::~XllmRpcService() {}

@@ -71,6 +71,13 @@ cc_library(
 target_link_libraries(anthropic_stream_encoder PUBLIC brpc-static leveldb::leveldb ZLIB::ZLIB protobuf::libprotobuf OpenSSL::SSL OpenSSL::Crypto)
 
 cc_library(
+  NAME response_handler
+  HDRS response_handler.h
+  SRCS response_handler.cpp
+  DEPS :anthropic_adapter :anthropic_stream_encoder :usage_proto_adapter :request :common
+)
+
+cc_library(
   NAME
   xllm_http_service
   HDRS
@@ -84,7 +91,10 @@ cc_library(
     :chat_json_parser
     :common
     :request
-    :scheduler
+    :router
+    :request_manager
+    :instance_controller
+    :response_handler
     absl::random_random
     absl::synchronization
     glog::glog

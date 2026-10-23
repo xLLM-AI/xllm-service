@@ -24,7 +24,7 @@ The single source of truth for the wire schema is the C++ struct
 
 We therefore emit exactly the subset the watcher needs, matching the field
 names and value encodings used by C++. The etcd key layout and namespace
-normalization mirror `instance_mgr.cpp` (`ETCD_KEYS_PREFIX_MAP`) and
+normalization mirror `coordinator/instance_discovery.cpp` (`kInstancePrefixes`) and
 `utils.cpp` (`normalize_etcd_namespace` / `build_etcd_key_with_namespace`).
 """
 
@@ -43,7 +43,7 @@ class InstanceType(IntEnum):
     MIX = 3
 
 
-# Mirror of `ETCD_KEYS_PREFIX_MAP` in scheduler/managers/instance_mgr.cpp:45.
+# Mirror of `kInstancePrefixes` in coordinator/instance_discovery.cpp.
 ETCD_KEYS_PREFIX_MAP = {
     InstanceType.DEFAULT: "XLLM:DEFAULT:",
     InstanceType.PREFILL: "XLLM:PREFILL:",
